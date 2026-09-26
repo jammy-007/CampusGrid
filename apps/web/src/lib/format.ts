@@ -1,6 +1,8 @@
+// Server components render dates, so pin the campus time zone instead of the server's.
 const dateTime = new Intl.DateTimeFormat('en-IN', {
   dateStyle: 'medium',
   timeStyle: 'short',
+  timeZone: process.env.NEXT_PUBLIC_TIME_ZONE ?? 'Asia/Kolkata',
 });
 
 export function formatDateTime(value: string | Date): string {
