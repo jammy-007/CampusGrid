@@ -1,0 +1,23 @@
+// Owned by Agent 3. Created by Agent 1 in Phase 0 from docs/CONTRACT.md.
+
+model ChatRoom {
+  id        String   @id @default(cuid())
+  teamId    String   @unique
+  createdAt DateTime @default(now())
+
+  team     Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  roomId    String
+  senderId  String
+  body      String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+
+  room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sender User     @relation(fields: [senderId], references: [id])
+
+  @@index([roomId, createdAt])
+}
