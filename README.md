@@ -11,7 +11,7 @@ cp .env.example .env
 pnpm i && docker compose up -d && pnpm db:migrate && pnpm db:seed && pnpm dev
 ```
 
-Web runs on http://localhost:3000 and the API on http://localhost:4000. Seeded accounts all use the password `password123`: `admin@campus.edu`, `org@campus.edu`, `judge1@campus.edu`, `judge2@campus.edu`, `s1@campus.edu` to `s6@campus.edu`.
+Web runs on http://localhost:3000 and the API on http://localhost:4000. Seeded accounts all use the password `password123`: `admin@campus.edu`, `org@campus.edu`, `judge1@campus.edu`, `judge2@campus.edu`, `s1@campus.edu` to `s12@campus.edu`. Students s1 to s6 start with no team so you can run the demo in [docs/CONTRACT.md](docs/CONTRACT.md); s7 to s12 are already in the two GridHack teams (invite codes `GRDHCK2A` and `GRDHCK3B`).
 
 ## Scripts
 

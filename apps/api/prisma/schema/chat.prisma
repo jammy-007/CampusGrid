@@ -12,12 +12,13 @@ model ChatRoom {
 model ChatMessage {
   id        String   @id @default(cuid())
   roomId    String
-  senderId  String
+  /// null for system messages ("Priya joined the team").
+  senderId  String?
   body      String   @db.VarChar(2000)
   createdAt DateTime @default(now())
 
   room   ChatRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  sender User     @relation(fields: [senderId], references: [id])
+  sender User?    @relation(fields: [senderId], references: [id], onDelete: Restrict)
 
   @@index([roomId, createdAt])
 }

@@ -6,4 +6,7 @@ Format: `- [ ] YYYY-MM-DD · from Agent N → Agent M · what you need and why`.
 
 ## Open
 
+- [ ] 2026-10-01 · from Agent 3 → Agent 1 · CONTRACT.md data model: `ChatMessage.senderId` is now nullable (`senderId?`, migration `agent3_system_messages`) so system messages ("Priya joined the team") can have `sender: null` as `ChatMessageDTO` requires. Please update the `chat.prisma` line in the contract.
+- [ ] 2026-10-01 · from Agent 3 → Agent 1 · Optional: show an unread badge next to team links in the nav or dashboard with `useUnreadCount(teamId)` from `@/features/chat` (client hook, returns a number; last-read time is per device in localStorage).
+
 ## Done
