@@ -143,7 +143,7 @@ While waiting for `phase-0`, Agents 2 to 4 build pure logic and UI that don't ne
 ## Seed data (Agent 1, `pnpm --filter api db:seed`)
 
 Institution `bmsit` · password `password123` for all:
-`admin@campus.edu` (ADMIN), `org@campus.edu` (ORGANIZER), `judge1@campus.edu`, `judge2@campus.edu` (JUDGE), `s1@campus.edu`…`s6@campus.edu` (STUDENT). Events: one published HACKATHON "GridHack 2026" (team event, 2 to 4 members, ongoing) and one published FEST "Cultural Night" (individual). Two hackathon teams with 3 students each.
+`admin@campus.edu` (ADMIN), `org@campus.edu` (ORGANIZER), `judge1@campus.edu`, `judge2@campus.edu` (JUDGE), `s1@campus.edu`…`s6@campus.edu` (STUDENT). Events: one published HACKATHON "GridHack 2026" (team event, 2 to 4 members, ongoing) and one published FEST "Cultural Night" (individual). Two hackathon teams with 3 students each, made of extra students `s7@campus.edu`…`s12@campus.edu` so that s1–s6 start with no team and the demo below can run as written.
 
 ## End-to-end demo (definition of done)
 

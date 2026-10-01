@@ -35,9 +35,11 @@ async function main() {
   const org = await mk('org@campus.edu', 'Olivia Organizer', 'ORGANIZER');
   await mk('judge1@campus.edu', 'Prof. Judge One', 'JUDGE');
   await mk('judge2@campus.edu', 'Prof. Judge Two', 'JUDGE');
+  // s1–s6 start with no team so the end-to-end demo can register, create and join teams;
+  // s7–s12 fill the two pre-made hackathon teams.
   const students = [];
-  for (let i = 1; i <= 6; i++) {
-    students.push(await mk(`s${i}@campus.edu`, `Student ${i}`, 'STUDENT', `1BY23CS00${i}`));
+  for (let i = 1; i <= 12; i++) {
+    students.push(await mk(`s${i}@campus.edu`, `Student ${i}`, 'STUDENT', `1BY23CS${String(i).padStart(3, '0')}`));
   }
 
   const now = Date.now();
@@ -81,8 +83,8 @@ async function main() {
   });
 
   const teams = [
-    { name: 'Null Pointers', inviteCode: 'GRIDHK2A', members: students.slice(0, 3) },
-    { name: 'Stack Smashers', inviteCode: 'GRIDHK3B', members: students.slice(3, 6) },
+    { name: 'Null Pointers', inviteCode: 'GRDHCK2A', members: students.slice(6, 9) },
+    { name: 'Stack Smashers', inviteCode: 'GRDHCK3B', members: students.slice(9, 12) },
   ];
   for (const t of teams) {
     const leader = t.members[0]!;
@@ -95,7 +97,7 @@ async function main() {
     }
   }
 
-  console.log(`Seeded institution "bmsit": 10 users (password "${PASSWORD}"), 2 events, 2 teams.`);
+  console.log(`Seeded institution "bmsit": 16 users (password "${PASSWORD}"), 2 events, 2 teams.`);
 }
 
 main()
