@@ -1,0 +1,151 @@
+// Owned by Agent 1. Other agents: request changes in docs/REQUESTS.md.
+
+enum Role {
+  STUDENT
+  ORGANIZER
+  JUDGE
+  ADMIN
+}
+
+enum EventType {
+  FEST
+  SYMPOSIUM
+  HACKATHON
+  WORKSHOP
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  ONGOING
+  COMPLETED
+}
+
+enum RegistrationStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model Institution {
+  id     String  @id @default(cuid())
+  name   String
+  slug   String  @unique
+  users  User[]
+  events Event[]
+}
+
+model User {
+  id            String   @id @default(cuid())
+  institutionId String
+  email         String   @unique
+  passwordHash  String
+  name          String
+  usn           String?
+  role          Role     @default(STUDENT)
+  createdAt     DateTime @default(now())
+
+  institution   Institution    @relation(fields: [institutionId], references: [id])
+  organized     Event[]        @relation("EventOrganizer")
+  registrations Registration[]
+  ledTeams      Team[]         @relation("TeamLeader")
+  teamMembers   TeamMember[]
+
+  // passes.prisma (Agent 2)
+  scannedCheckIns    CheckIn[]     @relation("CheckInScanner")
+  issuedCertificates Certificate[] @relation("CertificateIssuer")
+  // chat.prisma (Agent 3)
+  chatMessages ChatMessage[]
+  // hackathon.prisma (Agent 4)
+  judgeAssignments JudgeAssignment[]
+  scores           Score[]
+
+  @@index([institutionId])
+}
+
+model Event {
+  id                   String      @id @default(cuid())
+  institutionId        String
+  organizerId          String
+  title                String
+  description          String      @default("")
+  type                 EventType
+  venue                String
+  startsAt             DateTime
+  endsAt               DateTime
+  registrationDeadline DateTime
+  isTeamEvent          Boolean     @default(false)
+  minTeamSize          Int         @default(1)
+  maxTeamSize          Int         @default(1)
+  capacity             Int?
+  status               EventStatus @default(DRAFT)
+  createdAt            DateTime    @default(now())
+
+  institution   Institution    @relation(fields: [institutionId], references: [id])
+  organizer     User           @relation("EventOrganizer", fields: [organizerId], references: [id])
+  registrations Registration[]
+  teams         Team[]
+
+  // passes.prisma (Agent 2)
+  checkIns CheckIn[]
+  // hackathon.prisma (Agent 4)
+  submissions      Submission[]
+  rubric           Rubric?
+  judgeAssignments JudgeAssignment[]
+
+  @@index([institutionId, status, startsAt])
+  @@index([organizerId])
+}
+
+model Registration {
+  id        String             @id @default(cuid())
+  eventId   String
+  userId    String
+  teamId    String?
+  status    RegistrationStatus @default(CONFIRMED)
+  createdAt DateTime           @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team  Team? @relation(fields: [teamId], references: [id], onDelete: SetNull)
+
+  // passes.prisma (Agent 2)
+  pass        EventPass?
+  checkIns    CheckIn[]
+  certificate Certificate?
+
+  @@unique([eventId, userId])
+  @@index([teamId])
+}
+
+model Team {
+  id         String   @id @default(cuid())
+  eventId    String
+  name       String
+  inviteCode String   @unique
+  leaderId   String
+  createdAt  DateTime @default(now())
+
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  leader        User           @relation("TeamLeader", fields: [leaderId], references: [id])
+  members       TeamMember[]
+  registrations Registration[]
+
+  // chat.prisma (Agent 3)
+  chatRoom   ChatRoom?
+  // hackathon.prisma (Agent 4)
+  submission Submission?
+
+  @@unique([eventId, name])
+}
+
+model TeamMember {
+  teamId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([teamId, userId])
+  @@index([userId])
+}

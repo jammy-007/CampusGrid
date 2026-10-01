@@ -1,0 +1,42 @@
+// Owned by Agent 2. Created by Agent 1 in Phase 0 from docs/CONTRACT.md.
+
+model EventPass {
+  id             String    @id @default(cuid())
+  registrationId String    @unique
+  secretVersion  Int       @default(1)
+  issuedAt       DateTime  @default(now())
+  revokedAt      DateTime?
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+}
+
+model CheckIn {
+  id             String   @id @default(cuid())
+  registrationId String
+  eventId        String
+  scannedById    String
+  scannedAt      DateTime
+  deviceId       String
+  clientScanId   String   @unique
+  syncedAt       DateTime @default(now())
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  event        Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  scannedBy    User         @relation("CheckInScanner", fields: [scannedById], references: [id])
+
+  @@index([eventId])
+  @@index([registrationId])
+}
+
+model Certificate {
+  id             String   @id @default(cuid())
+  registrationId String   @unique
+  serial         String   @unique
+  verifyCode     String   @unique
+  issuedById     String
+  issuedAt       DateTime @default(now())
+  pdfPath        String?
+
+  registration Registration @relation(fields: [registrationId], references: [id], onDelete: Cascade)
+  issuedBy     User         @relation("CertificateIssuer", fields: [issuedById], references: [id])
+}

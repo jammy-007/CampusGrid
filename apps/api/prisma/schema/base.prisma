@@ -1,0 +1,11 @@
+// Owned by Agent 1. Generator + datasource for the multi-file schema.
+// Every *.prisma file in this folder is part of one schema; migrations live in ./migrations.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
