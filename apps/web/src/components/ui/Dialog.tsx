@@ -28,12 +28,12 @@ export function Dialog({ open, onClose, title, children, footer }: DialogProps) 
       onClick={(e) => {
         if (e.target === ref.current) onClose();
       }}
-      className="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-xl p-0 shadow-xl backdrop:bg-slate-900/40"
+      className="m-auto w-[min(32rem,calc(100vw-2rem))] rounded-2xl border border-white/15 bg-slate-950/95 p-0 text-slate-100 shadow-2xl backdrop-blur-2xl backdrop:bg-slate-950/70 backdrop:backdrop-blur-xs"
     >
-      <div className="space-y-4 p-5">
-        <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="space-y-4 p-6">
+        <h2 className="text-lg font-semibold text-white">{title}</h2>
         <div>{children}</div>
-        {footer && <div className="flex justify-end gap-2">{footer}</div>}
+        {footer && <div className="flex justify-end gap-2 pt-2">{footer}</div>}
       </div>
     </dialog>
   );

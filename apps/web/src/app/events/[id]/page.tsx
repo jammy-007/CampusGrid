@@ -37,8 +37,9 @@ export default async function EventPage({ params }: Props) {
           <StatusBadge status={event.status} />
           {event.isTeamEvent && <Badge>Teams of {event.minTeamSize}–{event.maxTeamSize}</Badge>}
         </div>
-        <h1 className="text-3xl font-bold">{event.title}</h1>
-        {event.organizerName && <p className="text-sm text-slate-500">Organized by {event.organizerName}</p>}
+        <h1 className="text-3xl font-bold text-white">{event.title}</h1>
+        {event.organizerName && <p className="text-sm text-slate-300">Organized by {event.organizerName}</p>}
+
       </div>
 
       {isManager && (

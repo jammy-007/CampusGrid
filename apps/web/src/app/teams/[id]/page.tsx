@@ -18,11 +18,12 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
   return (
     <div className="space-y-5">
       <div>
-        <Link href={`/events/${team.eventId}`} className="text-sm text-brand-600">
+        <Link href={`/events/${team.eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
           ← {team.eventTitle}
         </Link>
-        <h1 className="text-2xl font-semibold">{team.name}</h1>
+        <h1 className="mt-1 text-2xl font-bold text-white">{team.name}</h1>
       </div>
+
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-4">
           {team.inviteCode && (

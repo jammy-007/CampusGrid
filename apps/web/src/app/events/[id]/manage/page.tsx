@@ -5,7 +5,7 @@ import type { EventDTO, RegistrationDTO } from '@campusgrid/shared';
 import { apiServer } from '@/lib/server';
 import { getSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/format';
-import { Badge, ButtonLink, Card, Table, TBody, TD, TH, THead, TR } from '@/components/ui';
+import { Badge, ButtonLink, Card, DecryptedText, Table, TBody, TD, TH, THead, TR } from '@/components/ui';
 import { StatusBadge } from '../../_components/EventBits';
 import { StatusButton } from '../PublishButton';
 
@@ -35,13 +35,13 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
   const teams = new Set(confirmed.map((r) => r.teamId).filter(Boolean));
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <Link href={`/events/${id}`} className="text-sm text-brand-600">
+          <Link href={`/events/${id}`} className="text-sm font-medium text-sky-400 hover:underline">
             ← {event.title}
           </Link>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <h1 className="mt-1 flex items-center gap-2.5 text-2xl font-bold text-white">
             Manage event <StatusBadge status={event.status} />
           </h1>
         </div>
@@ -58,7 +58,7 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
           <Link
             key={t.href}
             href={`/events/${id}/${t.href}`}
-            className="rounded-md bg-white px-3 py-1.5 text-sm ring-1 ring-slate-200 hover:bg-slate-50"
+            className="rounded-xl border border-white/15 bg-slate-950/75 px-3.5 py-2 text-xs font-medium text-slate-200 backdrop-blur-md transition hover:border-sky-400/40 hover:bg-slate-900/90 hover:text-white"
           >
             {t.label}
           </Link>
@@ -67,28 +67,32 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
         <Card>
-          <p className="text-sm text-slate-500">Registered</p>
-          <p className="text-2xl font-semibold">
-            {confirmed.length}
-            {event.capacity !== null && <span className="text-base text-slate-400"> / {event.capacity}</span>}
+          <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Registered</p>
+          <p className="mt-1 font-mono text-2xl font-bold text-white">
+            <DecryptedText
+              text={`${confirmed.length}${event.capacity !== null ? ` / ${event.capacity}` : ''}`}
+              animateOn="view"
+            />
           </p>
         </Card>
         {event.isTeamEvent && (
           <Card>
-            <p className="text-sm text-slate-500">Teams</p>
-            <p className="text-2xl font-semibold">{teams.size}</p>
+            <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Teams</p>
+            <p className="mt-1 font-mono text-2xl font-bold text-white">
+              <DecryptedText text={String(teams.size)} animateOn="view" />
+            </p>
           </Card>
         )}
         <Card>
-          <p className="text-sm text-slate-500">Registration closes</p>
-          <p className="font-medium">{formatDateTime(event.registrationDeadline)}</p>
+          <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Registration closes</p>
+          <p className="mt-1 font-medium text-slate-100">{formatDateTime(event.registrationDeadline)}</p>
         </Card>
       </div>
 
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Registrations</h2>
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-white">Registrations</h2>
         {registrations.length === 0 ? (
-          <Card className="text-sm text-slate-600">Nobody has registered yet.</Card>
+          <Card className="text-sm text-slate-300">Nobody has registered yet.</Card>
         ) : (
           <Table>
             <THead>
@@ -110,7 +114,7 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
                   {event.isTeamEvent && (
                     <TD>
                       {r.team ? (
-                        <Link href={`/teams/${r.team.id}`} className="text-brand-600">
+                        <Link href={`/teams/${r.team.id}`} className="font-medium text-sky-400 hover:underline">
                           {r.team.name}
                         </Link>
                       ) : (
