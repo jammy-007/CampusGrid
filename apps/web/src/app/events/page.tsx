@@ -29,15 +29,15 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
   };
   const chip = (active: boolean) =>
     cn(
-      'rounded-full px-3.5 py-1.5 text-xs font-medium tracking-wide ring-1 backdrop-blur-md transition-all',
+      'rounded-full px-4 py-2 text-xs font-medium tracking-wide ring-1 backdrop-blur-md transition-all',
       active
         ? 'bg-gradient-to-r from-brand-600 to-sky-500 text-white shadow-md shadow-sky-500/20 ring-sky-400/50'
         : 'bg-slate-950/75 text-slate-300 ring-white/15 hover:bg-slate-900/90 hover:text-white',
     );
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="space-y-8">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-3xl font-bold tracking-tight text-white">
           <BlurText text="Events" />
         </h1>
@@ -47,7 +47,7 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
           </Magnet>
         )}
       </div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2.5">
         <Link href={href({ when: 'upcoming' })} className={chip(when === 'upcoming')}>
           Upcoming
         </Link>
@@ -65,9 +65,9 @@ export default async function EventsPage({ searchParams }: { searchParams: Promi
         ))}
       </div>
       {events.length === 0 ? (
-        <Card className="text-sm text-slate-300">No {when} events{type ? ` of this type` : ''}.</Card>
+        <Card className="p-8 text-center text-sm text-slate-300">No {when} events{type ? ` of this type` : ''}.</Card>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {events.map((e) => (
             <EventCard key={e.id} event={e} />
           ))}
