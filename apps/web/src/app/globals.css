@@ -8,6 +8,73 @@
   --color-brand-700: #1a47a6;
 }
 
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+
+.lenis.lenis-smooth {
+  scroll-behavior: auto !important;
+}
+
+.lenis.lenis-smooth [data-lenis-prevent] {
+  overscroll-behavior: contain;
+}
+
+.lenis.lenis-stopped {
+  overflow: hidden;
+}
+
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  @apply min-h-screen bg-slate-950 text-slate-100 antialiased selection:bg-sky-500/30 selection:text-sky-100;
+}
+
+@keyframes rb-shine {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: -100% 50%;
+  }
+}
+
+.rb-shiny-text {
+  background: linear-gradient(
+    115deg,
+    rgba(226, 232, 240, 0.85) 35%,
+    rgba(255, 255, 255, 1) 48%,
+    rgba(56, 189, 248, 1) 52%,
+    rgba(226, 232, 240, 0.85) 65%
+  );
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: rb-shine 4s linear infinite;
+}
+
+.rb-shiny-disabled {
+  animation: none;
+}
+
+/* Ensure legacy utility classes inside all pages/features maintain high contrast on Dark Obsidian Glass */
+.rb-spotlight-card .text-slate-600,
+.rb-spotlight-card .text-slate-700,
+.rb-spotlight-card .text-slate-800 {
+  color: #cbd5e1 !important;
+}
+
+.rb-spotlight-card .text-slate-500,
+.rb-spotlight-card .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+.rb-spotlight-card .text-brand-600,
+.rb-spotlight-card .text-brand-700 {
+  color: #38bdf8 !important;
+}
+
+.rb-spotlight-card .divide-slate-100 > :not(:last-child),
+.rb-spotlight-card .divide-slate-200 > :not(:last-child) {
+  border-color: rgba(255, 255, 255, 0.1) !important;
 }

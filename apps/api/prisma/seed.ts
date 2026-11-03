@@ -23,8 +23,9 @@ async function main() {
   }
 
   const institution = await prisma.institution.create({
-    data: { name: 'BMS Institute of Technology and Management', slug: 'bmsit' },
+    data: { name: 'Brindavan College Of Engineering', slug: 'bmsit' },
   });
+
 
   const mk = (email: string, name: string, role: Role, usn?: string) =>
     prisma.user.create({

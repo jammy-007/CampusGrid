@@ -2,7 +2,7 @@ import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttribu
 import { cn } from '@/lib/cn';
 
 const fieldClass =
-  'block w-full rounded-lg border-0 bg-white px-3 py-2 text-sm ring-1 ring-slate-300 placeholder:text-slate-400 focus:ring-2 focus:ring-brand-500 focus:outline-none disabled:bg-slate-100';
+  'block w-full rounded-xl border-0 bg-slate-950/75 px-3.5 py-2.5 text-sm text-slate-100 ring-1 ring-white/15 backdrop-blur-md transition-all placeholder:text-slate-500 focus:bg-slate-950/90 focus:ring-2 focus:ring-sky-400 focus:outline-none disabled:bg-slate-900/50 disabled:text-slate-500';
 
 interface FieldProps {
   label?: ReactNode;
@@ -12,15 +12,15 @@ interface FieldProps {
 
 function Field({ id, label, error, hint, children }: FieldProps & { id: string; children: ReactNode }) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1.5">
       {label && (
-        <label htmlFor={id} className="block text-sm font-medium text-slate-700">
+        <label htmlFor={id} className="block text-sm font-medium text-slate-200">
           {label}
         </label>
       )}
       {children}
-      {hint && !error && <p className="text-xs text-slate-500">{hint}</p>}
-      {error && <p className="text-xs text-red-600">{error}</p>}
+      {hint && !error && <p className="text-xs text-slate-400">{hint}</p>}
+      {error && <p className="text-xs font-medium text-red-400">{error}</p>}
     </div>
   );
 }
@@ -30,7 +30,7 @@ export function Input({ label, error, hint, className, id, ...props }: InputHTML
   const inputId = id ?? autoId;
   return (
     <Field id={inputId} label={label} error={error} hint={hint}>
-      <input id={inputId} className={cn(fieldClass, error && 'ring-red-500', className)} {...props} />
+      <input id={inputId} className={cn(fieldClass, error && 'ring-red-400', className)} {...props} />
     </Field>
   );
 }
@@ -40,7 +40,7 @@ export function Textarea({ label, error, hint, className, id, ...props }: Textar
   const inputId = id ?? autoId;
   return (
     <Field id={inputId} label={label} error={error} hint={hint}>
-      <textarea id={inputId} className={cn(fieldClass, 'min-h-24', error && 'ring-red-500', className)} {...props} />
+      <textarea id={inputId} className={cn(fieldClass, 'min-h-24', error && 'ring-red-400', className)} {...props} />
     </Field>
   );
 }
@@ -50,7 +50,7 @@ export function Select({ label, error, hint, className, id, children, ...props }
   const inputId = id ?? autoId;
   return (
     <Field id={inputId} label={label} error={error} hint={hint}>
-      <select id={inputId} className={cn(fieldClass, error && 'ring-red-500', className)} {...props}>
+      <select id={inputId} className={cn(fieldClass, error && 'ring-red-400', className)} {...props}>
         {children}
       </select>
     </Field>

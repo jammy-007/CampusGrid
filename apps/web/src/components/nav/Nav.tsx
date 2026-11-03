@@ -8,7 +8,7 @@ import { useSession } from '@/lib/session';
 import { apiFetch } from '@/lib/api';
 import { disconnectSockets } from '@/lib/socket';
 import { cn } from '@/lib/cn';
-import { Button, ButtonLink } from '@/components/ui';
+import { DecryptedText } from '@/components/react-bits';
 
 interface NavLink {
   href: string;
@@ -44,49 +44,81 @@ export function Nav() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
-        <Link href={user ? '/dashboard' : '/'} className="font-bold text-brand-700">
-          CampusGrid
+    <header className="sticky top-3 z-40 mx-auto max-w-6xl px-4">
+      <div className="flex h-14 items-center gap-4 rounded-2xl border border-white/15 bg-slate-950/75 px-5 shadow-[0_8px_32px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+        <Link
+          href={user ? '/dashboard' : '/'}
+          className="group flex items-center gap-2.5 text-base font-bold tracking-tight text-white"
+        >
+          <img
+            src="/logo.png"
+            alt="CampusGrid logo"
+            width={32}
+            height={32}
+            className="size-8 object-contain drop-shadow-[0_0_8px_rgba(56,189,248,0.45)] transition-transform duration-300 group-hover:scale-105"
+          />
+          <DecryptedText
+            text="CampusGrid"
+            animateOn="hover"
+            className="font-sans font-bold tracking-tight text-white"
+          />
         </Link>
+
         <nav className="hidden flex-1 items-center gap-1 sm:flex">
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className={cn(
-                'rounded-md px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100',
-                (pathname === l.href || (l.href !== '/events' && pathname.startsWith(`${l.href}/`))) &&
-                  'bg-slate-100 font-medium text-slate-900',
-              )}
-            >
-              {l.label}
-            </Link>
-          ))}
+          {links.map((l) => {
+            const active = pathname === l.href || (l.href !== '/events' && pathname.startsWith(`${l.href}/`));
+            return (
+              <Link
+                key={l.href}
+                href={l.href}
+                className={cn(
+                  'rounded-xl px-3.5 py-1.5 text-sm font-medium transition-all duration-200',
+                  active
+                    ? 'bg-sky-500/20 text-sky-200 ring-1 ring-sky-400/35'
+                    : 'text-slate-300 hover:bg-white/10 hover:text-white',
+                )}
+              >
+                {l.label}
+              </Link>
+            );
+          })}
         </nav>
-        <div className="ml-auto hidden items-center gap-2 sm:flex">
+        <div className="ml-auto hidden items-center gap-2.5 sm:flex">
           {user ? (
             <>
-              <span className="text-sm text-slate-600">
-                {user.name} <span className="text-xs text-slate-400">({user.role.toLowerCase()})</span>
+              <span className="rounded-lg bg-white/5 px-2.5 py-1 text-xs font-medium text-slate-200 ring-1 ring-white/10">
+                {user.name}{' '}
+                <span className="ml-1 font-mono text-[11px] text-sky-300 uppercase">
+                  {user.role.toLowerCase()}
+                </span>
               </span>
-              <Button variant="ghost" size="sm" onClick={logout}>
+              <button
+                type="button"
+                className="inline-flex h-8 items-center justify-center rounded-xl px-3 text-xs font-medium text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
+                onClick={logout}
+              >
                 Log out
-              </Button>
+              </button>
             </>
           ) : (
             <>
-              <ButtonLink href="/login" variant="ghost" size="sm">
+              <Link
+                href="/login"
+                className="inline-flex h-8 items-center justify-center rounded-xl px-3.5 text-xs font-medium text-slate-200 transition-colors hover:bg-white/10 hover:text-white"
+              >
                 Log in
-              </ButtonLink>
-              <ButtonLink href="/register" size="sm">
+              </Link>
+              <Link
+                href="/register"
+                className="inline-flex h-8 items-center justify-center rounded-xl bg-gradient-to-r from-brand-600 to-sky-500 px-3.5 text-xs font-semibold text-white shadow-md shadow-sky-500/20 ring-1 ring-white/20 transition hover:brightness-110"
+              >
                 Sign up
-              </ButtonLink>
+              </Link>
             </>
           )}
         </div>
         <button
-          className="ml-auto rounded-md p-2 text-slate-600 sm:hidden"
+          className="ml-auto rounded-xl p-2 text-slate-200 hover:bg-white/10 sm:hidden"
           aria-label="Menu"
           aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
@@ -95,22 +127,28 @@ export function Nav() {
         </button>
       </div>
       {open && (
-        <div className="border-t border-slate-200 px-4 py-2 sm:hidden" onClick={() => setOpen(false)}>
+        <div
+          className="mt-2 rounded-2xl border border-white/15 bg-slate-950/95 p-3 text-white shadow-2xl backdrop-blur-xl sm:hidden"
+          onClick={() => setOpen(false)}
+        >
           {links.map((l) => (
-            <Link key={l.href} href={l.href} className="block rounded-md px-2 py-2 text-sm">
+            <Link key={l.href} href={l.href} className="block rounded-xl px-3 py-2 text-sm hover:bg-white/10">
               {l.label}
             </Link>
           ))}
           {user ? (
-            <button className="block w-full rounded-md px-2 py-2 text-left text-sm text-red-600" onClick={logout}>
+            <button
+              className="block w-full rounded-xl px-3 py-2 text-left text-sm text-red-300 hover:bg-white/10"
+              onClick={logout}
+            >
               Log out ({user.name})
             </button>
           ) : (
             <>
-              <Link href="/login" className="block rounded-md px-2 py-2 text-sm">
+              <Link href="/login" className="block rounded-xl px-3 py-2 text-sm hover:bg-white/10">
                 Log in
               </Link>
-              <Link href="/register" className="block rounded-md px-2 py-2 text-sm">
+              <Link href="/register" className="block rounded-xl px-3 py-2 text-sm text-sky-300 hover:bg-white/10">
                 Sign up
               </Link>
             </>
