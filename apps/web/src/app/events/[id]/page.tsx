@@ -30,20 +30,19 @@ export default async function EventPage({ params }: Props) {
   const reg = event.myRegistration?.status === 'CONFIRMED' ? event.myRegistration : null;
 
   return (
-    <div className="space-y-5">
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-7">
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <Badge>{TYPE_LABEL[event.type]}</Badge>
           <StatusBadge status={event.status} />
           {event.isTeamEvent && <Badge>Teams of {event.minTeamSize}–{event.maxTeamSize}</Badge>}
         </div>
         <h1 className="text-3xl font-bold text-white">{event.title}</h1>
         {event.organizerName && <p className="text-sm text-slate-300">Organized by {event.organizerName}</p>}
-
       </div>
 
       {isManager && (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           <ButtonLink href={`/events/${event.id}/manage`}>Manage</ButtonLink>
           <ButtonLink href={`/events/${event.id}/edit`} variant="secondary">
             Edit
@@ -52,19 +51,19 @@ export default async function EventPage({ params }: Props) {
         </div>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-3">
-        <div className="space-y-5 lg:col-span-2">
-          <Card className="space-y-3">
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <Card className="space-y-4 p-6">
             {event.description ? (
-              <p className="whitespace-pre-line text-slate-700">{event.description}</p>
+              <p className="whitespace-pre-line text-sm leading-relaxed text-slate-200">{event.description}</p>
             ) : (
-              <p className="text-sm text-slate-500">No description yet.</p>
+              <p className="text-sm text-slate-400">No description yet.</p>
             )}
           </Card>
           {event.type === 'HACKATHON' && <HackathonPanel eventId={event.id} />}
         </div>
-        <div className="space-y-4">
-          <Card className="space-y-2 text-sm">
+        <div className="space-y-6">
+          <Card className="space-y-3 p-6 text-sm">
             <Row label="Starts" value={formatDateTime(event.startsAt)} />
             <Row label="Ends" value={formatDateTime(event.endsAt)} />
             <Row label="Venue" value={event.venue} />
@@ -75,7 +74,7 @@ export default async function EventPage({ params }: Props) {
             />
           </Card>
           {user?.role === 'STUDENT' && (
-            <Card className="space-y-3">
+            <Card className="space-y-4 p-6">
               {reg && <Badge tone="green">You are registered</Badge>}
               <EventActions event={event} open={open} />
               {reg && <EventPassButton registrationId={reg.id} />}
@@ -94,9 +93,9 @@ export default async function EventPage({ params }: Props) {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex justify-between gap-4">
-      <span className="text-slate-500">{label}</span>
-      <span className="text-right font-medium">{value}</span>
+    <div className="flex justify-between gap-4 py-1 border-b border-white/5 last:border-0">
+      <span className="text-slate-400">{label}</span>
+      <span className="text-right font-medium text-slate-200">{value}</span>
     </div>
   );
 }

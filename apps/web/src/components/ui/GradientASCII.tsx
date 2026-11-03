@@ -103,6 +103,7 @@ uniform float uScale;
 uniform float uSoftness;
 uniform float uFlow;
 uniform vec2 uSeed;
+uniform vec4 uPointer;
 uniform vec4 uTrail[24];
 uniform float uRadius;
 uniform vec4 uClicks[4];
@@ -152,15 +153,15 @@ vec3 encode(vec3 c) {
 vec3 horizon(vec2 p, float time, out float order) {
   float span = 0.5 * max(uAspect, 1.0);
   float x = p.x / span;
-  float arch = -0.17 - 0.2 * x * x + 0.02 * sin(time * 0.6);
-  float soft = mix(0.05, 0.22, uSoftness);
+  float arch = -0.24 - 0.16 * x * x + 0.025 * sin(time * 0.6);
+  float soft = mix(0.08, 0.26, uSoftness);
   float edge = p.y - arch;
-  float rim = 0.38 * smoothstep(-soft, 0.42, edge);
-  vec2 sun = vec2(0.08 * sin(time * 0.31) * span, 0.58);
-  float spread = length((p - sun) / vec2(0.95 * span, 0.75));
-  float sky = mix(0.55, 1.0, smoothstep(0.2, 0.95, spread));
-  order = clamp(edge * 1.3, 0.0, 1.0);
-  return vec3(rim, sky, smoothstep(0.18, 0.62, edge));
+  float rim = 0.52 * smoothstep(-soft, 0.36, edge);
+  vec2 sun = vec2(0.08 * sin(time * 0.31) * span, 0.42);
+  float spread = length((p - sun) / vec2(0.95 * span, 0.88));
+  float sky = mix(0.55, 1.0, smoothstep(0.15, 0.95, spread));
+  order = clamp(edge * 1.15 + 0.15, 0.0, 1.0);
+  return vec3(rim, sky, smoothstep(-0.02, 0.48, edge));
 }
 
 vec3 pinch(vec2 p, float time, out float order) {
@@ -207,7 +208,43 @@ vec4 tone(float t) {
 void main() {
   vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0);
   float time = uTime;
-  vec2 q = p / uScale;
+
+  float scramble = 0.0;
+  vec2 push = vec2(0.0);
+  if (uPointer.z > 0.001) {
+    vec2 dp = p - uPointer.xy;
+    float dist2 = dot(dp, dp);
+    float hover = uPointer.z * exp(-dist2 / (uRadius * uRadius * 2.1));
+    scramble = max(scramble, hover * (0.65 + 0.35 * uPointer.w));
+    push += dp * hover * (0.28 + 0.22 * uPointer.w);
+  }
+  for (int i = 0; i < 24; i++) {
+    vec4 point = uTrail[i];
+    if (point.z <= 0.0) continue;
+    vec2 d = p - point.xy;
+    float influence = point.z * exp(-dot(d, d) / (uRadius * uRadius));
+    scramble = max(scramble, influence);
+    push += d * influence * 0.15;
+  }
+  for (int i = 0; i < 4; i++) {
+    vec4 c = uClicks[i];
+    if (c.w <= 0.0) continue;
+    vec2 dc = p - c.xy;
+    float d = length(dc);
+    vec2 dir = d > 0.0001 ? dc / d : vec2(0.0);
+    if (uClickEffect == 1) {
+      float ring = exp(-pow((d - c.z * 0.75) / 0.07, 2.0)) * c.w;
+      scramble = max(scramble, ring * 1.25);
+      push -= dir * ring * 0.08;
+    } else if (uClickEffect == 2) {
+      float size = 0.08 + 0.24 * (1.0 - exp(-c.z * 5.0));
+      float burst = (1.0 - smoothstep(size * 0.55, size, d)) * c.w;
+      scramble = max(scramble, burst * 1.25);
+      push -= dir * burst * 0.08;
+    }
+  }
+
+  vec2 q = (p - push) / uScale;
   vec2 warp = vec2(
     noise(q * 1.6 + uSeed + vec2(0.0, time * 0.3)),
     noise(q * 1.6 + uSeed.yx + vec2(4.3, -time * 0.24))
@@ -223,31 +260,13 @@ void main() {
   float reveal = clamp((uIntro * 1.45 - order) / 0.45, 0.0, 1.0);
   reveal = reveal * reveal * (3.0 - 2.0 * reveal);
 
-  float scramble = 0.0;
-  for (int i = 0; i < 24; i++) {
-    vec4 point = uTrail[i];
-    if (point.z <= 0.0) continue;
-    vec2 d = p - point.xy;
-    scramble = max(scramble, point.z * exp(-dot(d, d) / (uRadius * uRadius)));
-  }
-  for (int i = 0; i < 4; i++) {
-    vec4 c = uClicks[i];
-    if (c.w <= 0.0) continue;
-    float d = length(p - c.xy);
-    if (uClickEffect == 1) {
-      scramble = max(scramble, exp(-pow((d - c.z * 0.75) / 0.06, 2.0)) * c.w);
-    } else if (uClickEffect == 2) {
-      float size = 0.08 + 0.22 * (1.0 - exp(-c.z * 5.0));
-      scramble = max(scramble, (1.0 - smoothstep(size * 0.6, size, d)) * c.w);
-    }
-  }
-  vec2 t = clamp(shape.xy * mix(0.7, 1.0, reveal), 0.0, 1.0);
-  vec4 mixed = mix(tone(t.x), tone(t.y), shape.z);
+  vec2 t = clamp(shape.xy * mix(0.7, 1.0, reveal) + scramble * vec2(0.28, 0.22), 0.0, 1.0);
+  vec4 mixed = mix(tone(t.x), tone(t.y), clamp(shape.z + scramble * 0.35, 0.0, 1.0));
   vec3 color = encode(labToRgb(mixed.rgb));
-  float alpha = mixed.a * reveal;
+  float alpha = clamp(mixed.a * reveal + scramble * 0.42 * reveal, 0.0, 1.0);
   float dither = (hash12(gl_FragCoord.xy + uFrame * 13.7) - 0.5) / 255.0;
   outColor = clamp(vec4(color * alpha + dither, alpha + dither), 0.0, 1.0);
-  outAux = vec4(reveal, scramble, 0.0, 1.0);
+  outAux = vec4(reveal, clamp(scramble, 0.0, 1.0), 0.0, 1.0);
 }`;
 
 const GLYPHS = `
@@ -290,21 +309,22 @@ vec4 glyphAt(vec2 px) {
   float level = hash12(cell * 1.73 + 4.1 + uSeedValue);
   float tick = floor(uGlyphTime * 9.0 + level * 9.0);
   float wobble = (hash12(cell * 2.31 + tick * 17.7) - 0.5) * uFlicker * 0.4 + (level - 0.5) * 0.1;
-  float tone = clamp(pow(value, 0.75) + wobble, 0.0, 1.0);
+  float reactiveBoost = aux.g;
+  float tone = clamp(pow(value, 0.75) + wobble + reactiveBoost * 0.25, 0.0, 1.0);
   float index = floor(tone * (uCount - 1.0) + 0.5);
   float decode = max(aux.g, 1.0 - aux.r);
   if (decode > 0.02) {
-    float frame = floor(uGlyphTime * 20.0);
-    if (hash12(cell * 3.7 + frame * 5.3) < decode * 1.25) index = 1.0 + floor(hash12(cell + frame * 1.37) * (uCount - 1.0));
+    float frame = floor(uGlyphTime * 24.0);
+    if (hash12(cell * 3.7 + frame * 5.3) < decode * 1.35) index = 1.0 + floor(hash12(cell + frame * 1.37) * (uCount - 1.0));
   }
-  float present = step(pick, uDensity * mix(1.0, 0.3 + tone * 1.1, 0.55));
-  float cutoff = smoothstep(0.03, 0.1, value);
-  float focus = step(hash12(cell * 0.71 + 9.2 + uSeedValue), uDepth);
+  float present = step(pick, clamp(uDensity * mix(1.0, 0.3 + tone * 1.1, 0.55) + reactiveBoost * 0.4, 0.0, 1.0));
+  float cutoff = smoothstep(0.02, 0.09, value + reactiveBoost * 0.22);
+  float focus = step(hash12(cell * 0.71 + 9.2 + uSeedValue), uDepth) * (1.0 - reactiveBoost * 0.8);
   float coverage = sampleGlyph(index, local, coord, focus * 1.2);
-  float alpha = uOpacity * present * cutoff * coverage * mix(1.0, 0.35 + 0.65 * level, 0.55) * (1.0 - focus * 0.5);
+  float alpha = clamp(uOpacity * (1.0 + reactiveBoost * 0.65), 0.0, 1.0) * present * cutoff * coverage * mix(1.0, 0.35 + 0.65 * level, 0.55) * (1.0 - focus * 0.5);
   if (uLight < 0.5) {
-    vec3 light = field.rgb * 0.55 + vec3(0.03) * field.a;
-    return vec4(light * alpha, 0.6 * field.a * alpha);
+    vec3 light = field.rgb * (0.58 + reactiveBoost * 0.38) + vec3(0.03 + reactiveBoost * 0.08) * field.a;
+    return vec4(light * alpha, clamp((0.62 + reactiveBoost * 0.3) * field.a * alpha, 0.0, 1.0));
   }
   vec3 ink = visible * 0.8;
   return vec4(ink * alpha, alpha);
@@ -585,7 +605,7 @@ export function GradientASCII({
     const clicks: TrailPoint[] = [];
     const trailData = new Float32Array(MAX_TRAIL * 4);
     const trail: TrailPoint[] = [];
-    const pointer = { x: 0, y: 0, inside: false };
+    const pointer = { x: 0, y: 0, inside: false, smoothX: 0, smoothY: 0, active: 0, speed: 0 };
     let atlas: Atlas | null = null;
     let atlasKey = '';
     let paletteKey = '';
@@ -680,6 +700,13 @@ export function GradientASCII({
       gl.uniform1f(fu.uSoftness, s.softness);
       gl.uniform1f(fu.uFlow, s.flow);
       gl.uniform2f(fu.uSeed, s.variation * 3.17, s.variation * 1.91);
+      gl.uniform4f(
+        fu.uPointer,
+        pointer.smoothX,
+        pointer.smoothY,
+        s.mouseInteraction && !reduce ? pointer.active : 0,
+        pointer.speed
+      );
       gl.uniform4fv(fu.uTrail, trailData);
       gl.uniform1f(fu.uRadius, s.scrambleRadius);
       gl.uniform4fv(fu.uClicks, clickData);
@@ -748,6 +775,16 @@ export function GradientASCII({
     };
 
     const updateInput = (dt: number) => {
+      const lerp = 1 - Math.exp(-dt * 14);
+      const prevX = pointer.smoothX;
+      const prevY = pointer.smoothY;
+      pointer.smoothX += (pointer.x - pointer.smoothX) * lerp;
+      pointer.smoothY += (pointer.y - pointer.smoothY) * lerp;
+      const instSpeed = Math.hypot(pointer.smoothX - prevX, pointer.smoothY - prevY) / Math.max(dt, 0.001);
+      pointer.speed = clamp(pointer.speed * Math.exp(-dt * 8) + instSpeed * 0.35, 0, 1);
+      const targetActive = pointer.inside ? 1 : 0;
+      pointer.active += (targetActive - pointer.active) * (1 - Math.exp(-dt * 10));
+
       trail.forEach(point => {
         point.age += dt;
       });
@@ -795,7 +832,7 @@ export function GradientASCII({
       }
       updateInput(dt);
       draw();
-      const busy = !reduce || introClock < 1 || clicks.length > 0 || trail.length > 0;
+      const busy = !reduce || introClock < 1 || clicks.length > 0 || trail.length > 0 || pointer.active > 0.01;
       if (busy) raf = requestAnimationFrame(frame);
       else last = 0;
     };
@@ -809,15 +846,21 @@ export function GradientASCII({
       const x = (event.clientX - rect.left) / Math.max(1, rect.width);
       const y = 1 - (event.clientY - rect.top) / Math.max(1, rect.height);
       const aspect = rect.width / Math.max(1, rect.height);
+      const wasInside = pointer.inside;
       pointer.inside = x >= 0 && x <= 1 && y >= 0 && y <= 1;
       pointer.x = (x - 0.5) * aspect;
       pointer.y = y - 0.5;
+      if (!wasInside && pointer.inside) {
+        pointer.smoothX = pointer.x;
+        pointer.smoothY = pointer.y;
+      }
     };
 
     const onPointerMove = (event: PointerEvent) => {
       locate(event);
       const s = settingsRef.current;
       if (!pointer.inside || !s.mouseInteraction || reduce) return;
+      wake();
       const head = trail[0];
       const gap = head ? Math.hypot(pointer.x - head.x, pointer.y - head.y) : Infinity;
       if (gap < TRAIL_STEP) return;
@@ -830,7 +873,6 @@ export function GradientASCII({
       }
       trail.unshift({ x: pointer.x, y: pointer.y, age: 0 });
       trail.length = Math.min(trail.length, MAX_TRAIL);
-      wake();
     };
 
     const onPointerDown = (event: PointerEvent) => {

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { apiFetch } from '@/lib/api';
 import type { CheckinBundleDTO, CheckinScanItem, CheckinSyncResponse } from '@campusgrid/shared';
+import { Badge, Button, ButtonLink, Card } from '@/components/ui';
 import {
   getCachedBundle,
   getCheckedInSet,
@@ -37,6 +38,7 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [manualCode, setManualCode] = useState<string>('');
   const [recentScans, setRecentScans] = useState<Array<{ id: string; name: string; time: string; success: boolean }>>([]);
 
@@ -48,6 +50,18 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
 
   const scannerRef = useRef<Html5Qrcode | null>(null);
   const isProcessingRef = useRef<boolean>(false);
+  const bundleRef = useRef<CheckinBundleDTO | null>(null);
+  const checkedInSetRef = useRef<Set<string>>(new Set());
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Keep refs synchronized with state
+  useEffect(() => {
+    bundleRef.current = bundle;
+  }, [bundle]);
+
+  useEffect(() => {
+    checkedInSetRef.current = checkedInSet;
+  }, [checkedInSet]);
 
   // Play audio chimes
   const playSound = useCallback((success: boolean) => {
@@ -109,46 +123,6 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
     }
   }, []);
 
-  // Register service worker for offline loading
-  useEffect(() => {
-    if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
-      navigator.serviceWorker.register('/scanner-sw.js').catch((err) => {
-        console.warn('Service worker registration failed:', err);
-      });
-    }
-  }, []);
-
-  // Load offline bundle & queue
-  const loadData = useCallback(async () => {
-    // 1. Try local IndexedDB first
-    const cached = await getCachedBundle(eventId);
-    if (cached) {
-      setBundle(cached);
-    }
-
-    const currentChecked = await getCheckedInSet();
-    setCheckedInSet(currentChecked);
-
-    const queued = await getQueuedScans();
-    setPendingSyncCount(queued.length);
-
-    // 2. Fetch fresh bundle from server if online
-    try {
-      const serverBundle = await apiFetch<CheckinBundleDTO>(`/api/events/${eventId}/checkin/bundle`);
-      setBundle(serverBundle);
-      await saveBundle(serverBundle);
-      const updatedChecked = await getCheckedInSet();
-      setCheckedInSet(updatedChecked);
-      setIsOnline(true);
-    } catch {
-      setIsOnline(false);
-    }
-  }, [eventId]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
   // Sync queued scans to server
   const syncQueue = useCallback(async () => {
     if (isSyncing) return;
@@ -181,6 +155,41 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
     }
   }, [isSyncing]);
 
+  // Load offline bundle & queue
+  const loadData = useCallback(async () => {
+    // 1. Try local IndexedDB first
+    const cached = await getCachedBundle(eventId);
+    if (cached) {
+      setBundle(cached);
+      bundleRef.current = cached;
+    }
+
+    const currentChecked = await getCheckedInSet();
+    setCheckedInSet(currentChecked);
+    checkedInSetRef.current = currentChecked;
+
+    const queued = await getQueuedScans();
+    setPendingSyncCount(queued.length);
+
+    // 2. Fetch fresh bundle from server if online
+    try {
+      const serverBundle = await apiFetch<CheckinBundleDTO>(`/api/events/${eventId}/checkin/bundle`);
+      setBundle(serverBundle);
+      bundleRef.current = serverBundle;
+      await saveBundle(serverBundle);
+      const updatedChecked = await getCheckedInSet();
+      setCheckedInSet(updatedChecked);
+      checkedInSetRef.current = updatedChecked;
+      setIsOnline(true);
+    } catch {
+      setIsOnline(false);
+    }
+  }, [eventId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
   // Periodic sync every 10 seconds & online event listener
   useEffect(() => {
     const interval = setInterval(() => {
@@ -209,11 +218,38 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
 
   // Process a scanned token string
   const handleDecodedToken = useCallback(
-    async (decodedText: string) => {
-      if (isProcessingRef.current || !bundle) return;
+    async (rawText: string) => {
+      if (isProcessingRef.current) return;
       isProcessingRef.current = true;
 
-      const result: ScanVerificationResult = await verifyScanToken(decodedText, bundle, checkedInSet);
+      let decodedText = rawText.trim();
+      // Handle URL pasted or scanned if someone scanned a full pass URL
+      if (decodedText.includes('token=')) {
+        decodedText = decodedText.split('token=')[1].split('&')[0];
+      }
+
+      let activeBundle = bundleRef.current;
+      if (!activeBundle) {
+        // Fallback: check IndexedDB directly
+        activeBundle = (await getCachedBundle(eventId)) || null;
+      }
+
+      if (!activeBundle) {
+        playSound(false);
+        setFlash({
+          show: true,
+          success: false,
+          message: 'Check-in roster still loading. Please try again in a moment.',
+        });
+        setTimeout(() => {
+          setFlash((f) => ({ ...f, show: false }));
+          isProcessingRef.current = false;
+        }, 1600);
+        return;
+      }
+
+      const activeCheckedSet = checkedInSetRef.current;
+      const result: ScanVerificationResult = await verifyScanToken(decodedText, activeBundle, activeCheckedSet);
 
       if (result.valid && result.attendee) {
         // Success
@@ -231,7 +267,9 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
         await markLocallyCheckedIn(result.attendee.rid);
 
         // Update local set to prevent duplicate immediate scan
-        setCheckedInSet((prev) => new Set([...prev, result.attendee!.rid]));
+        const nextSet = new Set([...activeCheckedSet, result.attendee.rid]);
+        setCheckedInSet(nextSet);
+        checkedInSetRef.current = nextSet;
         setPendingSyncCount((prev) => prev + 1);
 
         setRecentScans((prev) => [
@@ -287,45 +325,74 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
         isProcessingRef.current = false;
       }, 1600);
     },
-    [bundle, checkedInSet, playSound, syncQueue],
+    [eventId, playSound, syncQueue],
   );
 
-  // Initialize camera scanner
-  const startCamera = useCallback(async () => {
-    try {
-      setCameraError(null);
-      if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode('qr-reader-container', {
-          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
-          verbose: false,
-        });
-      }
+  // Initialize camera scanner with fallback
+  const startCamera = useCallback(
+    async (facing: 'environment' | 'user' = cameraFacing) => {
+      try {
+        setCameraError(null);
 
-      await scannerRef.current.start(
-        { facingMode: 'environment' },
-        {
+        // Ensure container exists
+        const container = document.getElementById('qr-reader-container');
+        if (!container) return;
+
+        if (!scannerRef.current) {
+          scannerRef.current = new Html5Qrcode('qr-reader-container', {
+            formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+            verbose: false,
+          });
+        }
+
+        const scanner = scannerRef.current;
+        if (scanner.isScanning) {
+          await scanner.stop().catch(() => {});
+        }
+
+        const config = {
           fps: 15,
           qrbox: { width: 250, height: 250 },
           aspectRatio: 1.0,
-        },
-        (decodedText) => {
-          handleDecodedToken(decodedText);
-        },
-        () => {
-          // Frame decode failure, normal while scanning
-        },
-      );
+        };
 
-      setCameraActive(true);
-    } catch (err) {
-      console.error('Camera start failed', err);
-      setCameraError('Camera access failed. Please ensure camera permissions are granted or use manual entry below.');
-      setCameraActive(false);
-    }
-  }, [handleDecodedToken]);
+        const onScanSuccess = (decodedText: string) => {
+          handleDecodedToken(decodedText);
+        };
+
+        try {
+          await scanner.start({ facingMode: facing }, config, onScanSuccess, () => {});
+          setCameraFacing(facing);
+        } catch (facingErr) {
+          // If requested facingMode fails (e.g. desktop webcam with no rear camera), try the other mode
+          const altFacing = facing === 'environment' ? 'user' : 'environment';
+          console.warn(`Camera facingMode "${facing}" failed, attempting "${altFacing}":`, facingErr);
+          try {
+            await scanner.start({ facingMode: altFacing }, config, onScanSuccess, () => {});
+            setCameraFacing(altFacing);
+          } catch {
+            // Try deviceId fallback if facingMode is unsupported
+            const devices = await Html5Qrcode.getCameras().catch(() => []);
+            if (devices && devices.length > 0) {
+              await scanner.start(devices[0].id, config, onScanSuccess, () => {});
+            } else {
+              throw facingErr;
+            }
+          }
+        }
+
+        setCameraActive(true);
+      } catch (err) {
+        console.error('Camera start failed', err);
+        setCameraError('Camera access unavailable on this device. You can use image upload or manual code verification below.');
+        setCameraActive(false);
+      }
+    },
+    [cameraFacing, handleDecodedToken],
+  );
 
   const stopCamera = useCallback(async () => {
-    if (scannerRef.current && cameraActive) {
+    if (scannerRef.current && scannerRef.current.isScanning) {
       try {
         await scannerRef.current.stop();
         setCameraActive(false);
@@ -333,33 +400,83 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
         console.error('Camera stop failed', err);
       }
     }
-  }, [cameraActive]);
+  }, []);
 
+  const toggleCameraFacing = useCallback(async () => {
+    const nextFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    await stopCamera();
+    await startCamera(nextFacing);
+  }, [cameraFacing, startCamera, stopCamera]);
+
+  // Mount camera on page load or when camera facing changes
   useEffect(() => {
-    startCamera();
+    let mounted = true;
+    const timer = setTimeout(() => {
+      if (mounted) {
+        startCamera();
+      }
+    }, 150);
+
     return () => {
+      mounted = false;
+      clearTimeout(timer);
       if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {});
+        try {
+          if (scannerRef.current.isScanning) {
+            scannerRef.current.stop().catch(() => {});
+          }
+        } catch {
+          // Ignored
+        }
       }
     };
   }, [startCamera]);
 
+  // Handle uploading an image file to scan
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      if (!scannerRef.current) {
+        scannerRef.current = new Html5Qrcode('qr-reader-container', {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false,
+        });
+      }
+
+      const decodedText = await scannerRef.current.scanFile(file, true);
+      handleDecodedToken(decodedText);
+    } catch (err) {
+      console.warn('Image file decode error:', err);
+      playSound(false);
+      setFlash({
+        show: true,
+        success: false,
+        message: 'No readable QR code found in selected image',
+      });
+      setTimeout(() => setFlash((f) => ({ ...f, show: false })), 1600);
+    } finally {
+      e.target.value = '';
+    }
+  };
+
   return (
-    <div className="relative min-h-[85vh] space-y-4">
+    <div className="relative min-h-[85vh] space-y-6">
       {/* Full-Screen Flash Overlay */}
       {flash.show && (
         <div
           className={`fixed inset-0 z-50 flex flex-col items-center justify-center p-6 text-center text-white transition-all duration-200 ${
-            flash.success ? 'bg-emerald-600' : 'bg-rose-600'
+            flash.success ? 'bg-emerald-600/95 backdrop-blur-md' : 'bg-rose-600/95 backdrop-blur-md'
           }`}
         >
-          <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-white/20 backdrop-blur-md">
+          <div className="mx-auto mb-4 flex h-24 w-24 items-center justify-center rounded-full bg-white/20 backdrop-blur-md shadow-2xl">
             {flash.success ? (
-              <svg className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-14 w-14 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
               </svg>
             ) : (
-              <svg className="h-16 w-16 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-14 w-14 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
               </svg>
             )}
@@ -375,170 +492,225 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
       )}
 
       {/* Top Header & Status Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div>
-          <Link href={`/events/${eventId}/manage`} className="text-xs font-semibold text-brand-600 hover:underline">
-            ← Manage Event
-          </Link>
-          <h1 className="text-xl font-bold text-slate-900">Pass Scanner</h1>
-        </div>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <Link href={`/events/${eventId}/manage`} className="text-sm font-medium text-sky-400 hover:underline">
+              ← Manage Event
+            </Link>
+            <h1 className="mt-1 text-2xl font-bold text-white">Pass Scanner</h1>
+            <p className="text-xs text-slate-400">Scan student dynamic QR passes or paste codes for instant admission</p>
+          </div>
 
-        <div className="flex items-center gap-2">
-          {/* Online/Offline Badge */}
-          <span
-            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-              isOnline ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-600/20' : 'bg-amber-50 text-amber-800 ring-1 ring-amber-600/20'
-            }`}
-          >
-            <span className={`h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            {isOnline ? 'Online' : 'Offline Mode'}
-          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Online/Offline Badge */}
+            <Badge tone={isOnline ? 'green' : 'amber'}>
+              <span className={`mr-1.5 h-2 w-2 rounded-full ${isOnline ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {isOnline ? 'Online' : 'Offline Mode'}
+            </Badge>
 
-          {/* Pending Sync Count */}
-          {pendingSyncCount > 0 ? (
-            <button
-              onClick={() => syncQueue()}
-              disabled={isSyncing}
-              className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700 ring-1 ring-blue-600/20 hover:bg-blue-100"
+            {/* Pending Sync Count */}
+            {pendingSyncCount > 0 ? (
+              <button
+                onClick={() => syncQueue()}
+                disabled={isSyncing}
+                className="inline-flex items-center gap-1.5 rounded-full bg-sky-500/15 px-3 py-1 text-xs font-semibold text-sky-300 ring-1 ring-sky-400/35 hover:bg-sky-500/25"
+              >
+                <svg className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Sync ({pendingSyncCount})
+              </button>
+            ) : (
+              <Badge tone="neutral">Synced</Badge>
+            )}
+
+            <ButtonLink
+              href={`/events/${eventId}/attendance`}
+              variant="secondary"
+              size="sm"
             >
-              <svg className={`h-3.5 w-3.5 ${isSyncing ? 'animate-spin' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Sync ({pendingSyncCount})
-            </button>
-          ) : (
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
-              Synced
-            </span>
-          )}
-
-          <Link
-            href={`/events/${eventId}/attendance`}
-            className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-200"
-          >
-            Attendance
-          </Link>
+              Attendance
+            </ButtonLink>
+          </div>
         </div>
-      </div>
+      </Card>
 
       {/* Roster & Stats Summary */}
       {bundle && (
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <span className="text-xs text-slate-500">Roster in Bundle</span>
-            <p className="text-xl font-bold text-slate-900">{bundle.registrations.length}</p>
-          </div>
-          <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <span className="text-xs text-slate-500">Checked In</span>
-            <p className="text-xl font-bold text-emerald-600">{checkedInSet.size}</p>
-          </div>
-          <div className="col-span-2 sm:col-span-1 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <span className="text-xs text-slate-500">Remaining</span>
-            <p className="text-xl font-bold text-slate-600">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <Card className="p-4">
+            <span className="text-xs font-medium text-slate-400">Roster in Bundle</span>
+            <p className="mt-1 text-2xl font-bold text-white">{bundle.registrations.length}</p>
+          </Card>
+          <Card className="p-4">
+            <span className="text-xs font-medium text-slate-400">Checked In</span>
+            <p className="mt-1 text-2xl font-bold text-emerald-400">{checkedInSet.size}</p>
+          </Card>
+          <Card className="col-span-2 sm:col-span-1 p-4">
+            <span className="text-xs font-medium text-slate-400">Remaining</span>
+            <p className="mt-1 text-2xl font-bold text-slate-300">
               {Math.max(0, bundle.registrations.length - checkedInSet.size)}
             </p>
-          </div>
+          </Card>
         </div>
       )}
 
       {/* Camera Scanner Viewport */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-lg">
+      <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl backdrop-blur-xl">
         <div className="relative">
-          <div id="qr-reader-container" className="w-full min-h-[320px]" />
+          <div id="qr-reader-container" className="w-full min-h-[340px]" />
 
           {/* Scanner Active Overlay Guidelines */}
           {cameraActive && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div className="h-64 w-64 rounded-2xl border-2 border-emerald-400/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]">
+              <div className="relative h-64 w-64 rounded-2xl border-2 border-emerald-400/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)]">
                 <div className="h-0.5 w-full bg-emerald-400 animate-pulse mt-32" />
+                <span className="absolute -bottom-7 left-0 right-0 text-center text-[11px] font-medium tracking-wider text-emerald-300 uppercase">
+                  Point camera at pass QR
+                </span>
               </div>
             </div>
           )}
 
           {cameraError && (
-            <div className="p-6 text-center text-white">
-              <svg className="mx-auto h-10 w-10 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-              <p className="mt-2 text-sm text-slate-300">{cameraError}</p>
-              <button
-                onClick={() => startCamera()}
-                className="mt-3 rounded-lg bg-emerald-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-emerald-500"
-              >
-                Retry Camera
-              </button>
+            <div className="p-8 text-center text-white">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15 text-amber-400 ring-1 ring-amber-400/30">
+                <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <p className="text-sm font-medium text-slate-200">{cameraError}</p>
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                <button
+                  onClick={() => startCamera()}
+                  className="rounded-xl bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-500"
+                >
+                  Retry Camera
+                </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-slate-700"
+                >
+                  Upload QR Image
+                </button>
+              </div>
             </div>
           )}
         </div>
 
         {/* Camera Control Bar */}
-        <div className="flex items-center justify-between bg-slate-900 px-4 py-3 text-xs text-slate-400">
-          <span className="flex items-center gap-1.5">
-            <span className={`h-2 w-2 rounded-full ${cameraActive ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
-            {cameraActive ? 'Rear Camera Continuous' : 'Camera Paused'}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/10 bg-slate-900/90 px-4 py-3 text-xs text-slate-400">
+          <span className="flex items-center gap-2">
+            <span className={`h-2.5 w-2.5 rounded-full ${cameraActive ? 'bg-emerald-400 animate-ping' : 'bg-slate-500'}`} />
+            <span className="font-medium text-slate-300">
+              {cameraActive ? `${cameraFacing === 'environment' ? 'Rear' : 'Front'} Camera Active` : 'Camera Inactive'}
+            </span>
           </span>
-          <button
-            onClick={() => (cameraActive ? stopCamera() : startCamera())}
-            className="font-medium text-emerald-400 hover:text-emerald-300"
-          >
-            {cameraActive ? 'Pause Camera' : 'Start Camera'}
-          </button>
+
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleImageFileChange}
+            />
+
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="inline-flex items-center gap-1 rounded-lg bg-slate-800/90 px-2.5 py-1 text-xs font-medium text-slate-200 ring-1 ring-white/10 hover:bg-slate-700 hover:text-white"
+              title="Upload QR screenshot or photo"
+            >
+              <svg className="h-3.5 w-3.5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Upload Image
+            </button>
+
+            {cameraActive && (
+              <button
+                onClick={toggleCameraFacing}
+                className="inline-flex items-center gap-1 rounded-lg bg-slate-800/90 px-2.5 py-1 text-xs font-medium text-slate-200 ring-1 ring-white/10 hover:bg-slate-700 hover:text-white"
+                title="Switch Camera (Front/Rear)"
+              >
+                <svg className="h-3.5 w-3.5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Flip
+              </button>
+            )}
+
+            <button
+              onClick={() => (cameraActive ? stopCamera() : startCamera())}
+              className="font-semibold text-emerald-400 hover:text-emerald-300"
+            >
+              {cameraActive ? 'Pause Camera' : 'Start Camera'}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Manual Token Verification / Paste fallback */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Manual Pass Verification</h3>
-        <p className="mt-0.5 text-xs text-slate-500">If camera cannot scan, paste the token string directly:</p>
-        <div className="mt-2 flex gap-2">
+      <Card className="space-y-3 p-5">
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Manual Pass Code Verification</h3>
+          <p className="mt-0.5 text-xs text-slate-400">
+            If the attendee’s camera cannot scan or screen brightness is low, paste their dynamic pass code:
+          </p>
+        </div>
+        <div className="flex gap-2">
           <input
             type="text"
             placeholder="eyJ2IjoxLCJyaWQiOi..."
             value={manualCode}
             onChange={(e) => setManualCode(e.target.value)}
-            className="flex-1 rounded-lg border border-slate-300 px-3 py-1.5 text-xs focus:border-brand-500 focus:outline-none"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && manualCode.trim()) {
+                handleDecodedToken(manualCode.trim());
+                setManualCode('');
+              }
+            }}
+            className="flex-1 rounded-xl border border-white/10 bg-slate-950/70 px-3.5 py-2 text-xs text-white placeholder:text-slate-500 focus:border-sky-400 focus:outline-none focus:ring-1 focus:ring-sky-400"
           />
-          <button
+          <Button
             onClick={() => {
               if (manualCode.trim()) {
                 handleDecodedToken(manualCode.trim());
                 setManualCode('');
               }
             }}
-            className="rounded-lg bg-slate-900 px-4 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            variant="primary"
+            size="sm"
           >
-            Verify
-          </button>
+            Verify Pass
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {/* Recent Scans Activity Log */}
       {recentScans.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Recent Scans</h3>
-          <div className="mt-2 divide-y divide-slate-100">
+        <Card className="space-y-3 p-5">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400">Recent Scans</h3>
+          <div className="divide-y divide-white/10">
             {recentScans.map((s) => (
-              <div key={s.id} className="flex items-center justify-between py-2 text-xs">
-                <div className="flex items-center gap-2">
+              <div key={s.id} className="flex items-center justify-between py-2.5 text-xs">
+                <div className="flex items-center gap-2.5">
                   <span
-                    className={`h-2 w-2 rounded-full ${s.success ? 'bg-emerald-500' : 'bg-red-500'}`}
+                    className={`h-2.5 w-2.5 rounded-full ${s.success ? 'bg-emerald-400' : 'bg-red-400'}`}
                   />
-                  <span className="font-semibold text-slate-900">{s.name}</span>
+                  <span className="font-semibold text-white">{s.name}</span>
                 </div>
-                <div className="flex items-center gap-3 text-slate-500">
-                  <span>{s.time}</span>
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
-                      s.success ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
-                    }`}
-                  >
+                <div className="flex items-center gap-3 text-slate-400">
+                  <span className="font-mono text-[11px]">{s.time}</span>
+                  <Badge tone={s.success ? 'green' : 'red'}>
                     {s.success ? 'ACCEPTED' : 'REJECTED'}
-                  </span>
+                  </Badge>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       )}
     </div>
   );

@@ -29,14 +29,20 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             shape="horizon"
             characters=" =+xX0S8#@"
             cellSize={18}
-            density={0.78}
-            gradientOpacity={0.55}
-            glyphOpacity={0.62}
-            speed={0.65}
+            density={0.82}
+            gradientOpacity={0.62}
+            glyphOpacity={0.72}
+            glow={0.32}
+            scale={1.15}
+            flow={0.65}
+            speed={0.75}
+            mouseInteraction={true}
+            scrambleRadius={0.18}
+            clickEffect="wave"
           />
           <div
             aria-hidden="true"
-            className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(2,6,23,0.45)_0%,rgba(2,6,23,0.75)_65%,rgba(2,6,23,0.92)_100%)]"
+            className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.18)_0%,rgba(2,6,23,0.32)_55%,rgba(2,6,23,0.72)_72%,rgba(2,6,23,0.96)_100%)]"
           />
         </div>
         <SessionProvider initialUser={user}>
