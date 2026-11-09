@@ -23,7 +23,14 @@ enum EventStatus {
 
 enum RegistrationStatus {
   CONFIRMED
+  WAITLISTED
   CANCELLED
+}
+
+enum AnnouncementPriority {
+  INFO
+  IMPORTANT
+  URGENT
 }
 
 model Institution {
@@ -49,9 +56,11 @@ model User {
   registrations Registration[]
   ledTeams      Team[]         @relation("TeamLeader")
   teamMembers   TeamMember[]
+  authoredAnnouncements EventAnnouncement[] @relation("AnnouncementAuthor")
 
   // passes.prisma (Agent 2)
   scannedCheckIns    CheckIn[]     @relation("CheckInScanner")
+  scannedCheckOuts   CheckIn[]     @relation("CheckOutScanner")
   issuedCertificates Certificate[] @relation("CertificateIssuer")
   // chat.prisma (Agent 3)
   chatMessages ChatMessage[]
@@ -72,6 +81,7 @@ model Event {
   venue                String
   startsAt             DateTime
   endsAt               DateTime
+  checkoutOpensAt      DateTime?
   registrationDeadline DateTime
   isTeamEvent          Boolean     @default(false)
   minTeamSize          Int         @default(1)
@@ -84,6 +94,7 @@ model Event {
   organizer     User           @relation("EventOrganizer", fields: [organizerId], references: [id])
   registrations Registration[]
   teams         Team[]
+  announcements EventAnnouncement[]
 
   // passes.prisma (Agent 2)
   checkIns CheckIn[]
@@ -123,6 +134,7 @@ model Team {
   name       String
   inviteCode String   @unique
   leaderId   String
+  isOpen     Boolean  @default(true)
   createdAt  DateTime @default(now())
 
   event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
@@ -148,4 +160,19 @@ model TeamMember {
 
   @@id([teamId, userId])
   @@index([userId])
+}
+
+model EventAnnouncement {
+  id        String               @id @default(cuid())
+  eventId   String
+  authorId  String
+  title     String
+  body      String
+  priority  AnnouncementPriority @default(INFO)
+  createdAt DateTime             @default(now())
+
+  event  Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  author User  @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+
+  @@index([eventId, createdAt])
 }

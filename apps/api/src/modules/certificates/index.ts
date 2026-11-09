@@ -2,11 +2,17 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
-import type { CertificateDTO, IssueCertificatesResponse, VerifyCertificateResponse } from '@campusgrid/shared';
+import type {
+  CertificateDTO,
+  EligibleCertificateRegistrationDTO,
+  IssueCertificatesResponse,
+  VerifyCertificateResponse,
+} from '@campusgrid/shared';
 import { requireAuth, requireEventOrganizer } from '../../middleware/auth';
 import { prisma } from '../../lib/prisma';
 import { badRequest, forbidden, notFound } from '../../lib/errors';
 import { env } from '../../lib/env';
+import { fetchAndComputeLeaderboard } from '../leaderboard/service';
 
 export const router = Router();
 
@@ -19,6 +25,25 @@ function generateRandomVerifyCode(length = 10): string {
     code += VERIFY_CODE_CHARS[bytes[i] % VERIFY_CODE_CHARS.length];
   }
   return code;
+}
+
+/**
+ * Resolves Hackathon achievement title (1st/2nd/3rd place) for a team in an event.
+ */
+async function resolveTeamAchievement(
+  eventId: string,
+  eventType: string,
+  teamId: string | null,
+): Promise<string | null> {
+  if (eventType !== 'HACKATHON' || !teamId) return null;
+  const leaderboard = await fetchAndComputeLeaderboard(eventId);
+  if (!leaderboard) return null;
+  const entry = leaderboard.rows.find((e) => e.teamId === teamId && e.judgesScored > 0);
+  if (!entry) return null;
+  if (entry.rank === 1) return '1ST PLACE WINNER';
+  if (entry.rank === 2) return '2ND PLACE RUNNER-UP';
+  if (entry.rank === 3) return '3RD PLACE WINNER';
+  return null;
 }
 
 /**
@@ -36,6 +61,8 @@ async function generateCertificatePdf(cert: {
   venue: string;
   institutionName: string;
   issuerName: string;
+  achievement?: string | null;
+  teamName?: string | null;
 }): Promise<Buffer> {
   const verifyUrl = `${env.appUrl}/verify/${cert.verifyCode}`;
   const qrBuffer = await QRCode.toBuffer(verifyUrl, {
@@ -103,9 +130,15 @@ async function generateCertificatePdf(cert: {
       .text(cert.studentName, 0, 185, { align: 'center', width });
 
     // Student USN / ID
-    const usnText = cert.studentUsn ? `USN: ${cert.studentUsn}` : 'Student Participant';
+    const usnBase = cert.studentUsn ? `USN: ${cert.studentUsn}` : 'Student Participant';
+    const usnText = cert.teamName ? `${usnBase}  ·  Team: ${cert.teamName}` : usnBase;
     doc.fillColor('#64748b').fontSize(12).font('Helvetica')
-      .text(usnText, 0, 215, { align: 'center', width });
+      .text(usnText, 0, 212, { align: 'center', width });
+
+    if (cert.achievement) {
+      doc.fillColor('#b45309').fontSize(13).font('Helvetica-Bold')
+        .text(`★ ${cert.achievement} ★`, 0, 230, { align: 'center', width });
+    }
 
     // Description text
     const dateStr = cert.eventStartsAt.toLocaleDateString('en-US', {
@@ -204,12 +237,16 @@ router.post('/events/:eventId/certificates/issue', requireAuth, requireEventOrga
     throw badRequest('Certificates can only be issued for ONGOING or COMPLETED events', 'EVENT_NOT_ELIGIBLE');
   }
 
-  // Find all confirmed registrations with checkIns but no certificate
-  const checkedInWithoutCert = await prisma.registration.findMany({
+  // Find all confirmed registrations with both check-in AND check-out completed, but no certificate yet
+  const eligibleWithoutCert = await prisma.registration.findMany({
     where: {
       eventId,
       status: 'CONFIRMED',
-      checkIns: { some: {} },
+      checkIns: {
+        some: {
+          checkedOutAt: { not: null },
+        },
+      },
       certificate: null,
     },
     include: {
@@ -217,7 +254,7 @@ router.post('/events/:eventId/certificates/issue', requireAuth, requireEventOrga
     },
   });
 
-  if (checkedInWithoutCert.length === 0) {
+  if (eligibleWithoutCert.length === 0) {
     const existing = await prisma.certificate.findMany({
       where: {
         registration: { eventId },
@@ -261,7 +298,7 @@ router.post('/events/:eventId/certificates/issue', requireAuth, requireEventOrga
 
   const createdCertificates: CertificateDTO[] = [];
 
-  for (const reg of checkedInWithoutCert) {
+  for (const reg of eligibleWithoutCert) {
     let serial = '';
     let verifyCode = '';
     let inserted = false;
@@ -314,12 +351,183 @@ router.post('/events/:eventId/certificates/issue', requireAuth, requireEventOrga
     }
   }
 
+  const allCertificates = await prisma.certificate.findMany({
+    where: {
+      registration: { eventId },
+    },
+    include: {
+      registration: {
+        include: { user: true, event: { include: { institution: true } } },
+      },
+      issuedBy: true,
+    },
+    orderBy: { issuedAt: 'asc' },
+  });
+
+  const allDTOs: CertificateDTO[] = allCertificates.map((c) => ({
+    id: c.id,
+    registrationId: c.registrationId,
+    serial: c.serial,
+    verifyCode: c.verifyCode,
+    issuedById: c.issuedById,
+    issuedAt: c.issuedAt.toISOString(),
+    studentName: c.registration.user.name,
+    studentEmail: c.registration.user.email,
+    studentUsn: c.registration.user.usn,
+    eventTitle: c.registration.event.title,
+    eventStartsAt: c.registration.event.startsAt.toISOString(),
+    eventEndsAt: c.registration.event.endsAt.toISOString(),
+    institutionName: c.registration.event.institution.name,
+    issuerName: c.issuedBy.name,
+  }));
+
   const response: IssueCertificatesResponse = {
     count: createdCertificates.length,
-    certificates: createdCertificates,
+    certificates: allDTOs,
   };
 
   res.json(response);
+});
+
+/**
+ * POST /api/events/:eventId/certificates/claim
+ * Allows a signed-in student to claim their own OD certificate for an event,
+ * provided they have both checked in AND checked out (at/after checkoutOpensAt).
+ */
+router.post('/events/:eventId/certificates/claim', requireAuth, async (req, res) => {
+  const eventId = req.params.eventId as string;
+  const user = req.user!;
+
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: {
+      institution: true,
+      organizer: true,
+    },
+  });
+
+  if (!event || event.institutionId !== user.institutionId) {
+    throw notFound('Event not found');
+  }
+
+  if (event.status !== 'COMPLETED' && event.status !== 'ONGOING') {
+    throw badRequest('Certificates can only be claimed for ONGOING or COMPLETED events', 'EVENT_NOT_ELIGIBLE');
+  }
+
+  const registration = await prisma.registration.findFirst({
+    where: {
+      eventId,
+      userId: user.id,
+      status: 'CONFIRMED',
+    },
+    include: {
+      user: true,
+      checkIns: {
+        orderBy: { scannedAt: 'asc' },
+        take: 1,
+      },
+      certificate: {
+        include: { issuedBy: true },
+      },
+    },
+  });
+
+  if (!registration) {
+    throw notFound('Confirmed registration not found for this event');
+  }
+
+  // If already claimed/issued, return existing certificate idempotently
+  if (registration.certificate) {
+    const c = registration.certificate;
+    const dto: CertificateDTO = {
+      id: c.id,
+      registrationId: c.registrationId,
+      serial: c.serial,
+      verifyCode: c.verifyCode,
+      issuedById: c.issuedById,
+      issuedAt: c.issuedAt.toISOString(),
+      studentName: registration.user.name,
+      studentEmail: registration.user.email,
+      studentUsn: registration.user.usn,
+      eventTitle: event.title,
+      eventStartsAt: event.startsAt.toISOString(),
+      eventEndsAt: event.endsAt.toISOString(),
+      eventVenue: event.venue,
+      institutionName: event.institution.name,
+      issuerName: c.issuedBy.name,
+    };
+    return res.json({ certificate: dto });
+  }
+
+  const checkIn = registration.checkIns[0];
+  if (!checkIn) {
+    throw badRequest(
+      'You must scan your QR pass at event entry (Check-In) before claiming a certificate',
+      'CHECKIN_REQUIRED',
+    );
+  }
+
+  if (!checkIn.checkedOutAt) {
+    throw badRequest(
+      'You must scan your QR pass at check-out time before claiming a certificate',
+      'CHECKOUT_REQUIRED',
+    );
+  }
+
+  if (event.checkoutOpensAt && checkIn.checkedOutAt < event.checkoutOpensAt) {
+    throw badRequest(
+      'Your check-out scan was recorded before the official check-out window opened',
+      'CHECKOUT_TOO_EARLY',
+    );
+  }
+
+  const currentYear = new Date().getFullYear();
+  const certCount = await prisma.certificate.count();
+  let nextSerialNum = certCount + 1;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const serial = `CG-${currentYear}-${String(nextSerialNum).padStart(6, '0')}`;
+    const verifyCode = generateRandomVerifyCode(10);
+    nextSerialNum++;
+
+    try {
+      const cert = await prisma.certificate.create({
+        data: {
+          registrationId: registration.id,
+          serial,
+          verifyCode,
+          issuedById: event.organizerId,
+        },
+      });
+
+      const dto: CertificateDTO = {
+        id: cert.id,
+        registrationId: cert.registrationId,
+        serial: cert.serial,
+        verifyCode: cert.verifyCode,
+        issuedById: cert.issuedById,
+        issuedAt: cert.issuedAt.toISOString(),
+        studentName: registration.user.name,
+        studentEmail: registration.user.email,
+        studentUsn: registration.user.usn,
+        eventTitle: event.title,
+        eventStartsAt: event.startsAt.toISOString(),
+        eventEndsAt: event.endsAt.toISOString(),
+        eventVenue: event.venue,
+        institutionName: event.institution.name,
+        issuerName: event.organizer.name,
+      };
+
+      return res.status(201).json({ certificate: dto });
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  throw new Error(`Failed to generate unique serial/code for registration ${registration.id}`);
 });
 
 /**
@@ -337,6 +545,7 @@ router.get('/certificates/:id/pdf', requireAuth, async (req, res) => {
       registration: {
         include: {
           user: true,
+          team: true,
           event: {
             include: { institution: true },
           },
@@ -359,6 +568,12 @@ router.get('/certificates/:id/pdf', requireAuth, async (req, res) => {
     throw forbidden('Not authorized to access this certificate');
   }
 
+  const achievement = await resolveTeamAchievement(
+    cert.registration.eventId,
+    cert.registration.event.type,
+    cert.registration.teamId,
+  );
+
   const pdfBuffer = await generateCertificatePdf({
     serial: cert.serial,
     verifyCode: cert.verifyCode,
@@ -371,6 +586,8 @@ router.get('/certificates/:id/pdf', requireAuth, async (req, res) => {
     venue: cert.registration.event.venue,
     institutionName: cert.registration.event.institution.name,
     issuerName: cert.issuedBy.name,
+    achievement,
+    teamName: cert.registration.team?.name ?? null,
   });
 
   res.setHeader('Content-Type', 'application/pdf');
@@ -380,50 +597,102 @@ router.get('/certificates/:id/pdf', requireAuth, async (req, res) => {
 
 /**
  * GET /api/me/certificates
- * Lists certificates earned by the signed-in student.
+ * Lists certificates earned by the signed-in student, plus attendance/claim status for their registrations.
  */
 router.get('/me/certificates', requireAuth, async (req, res) => {
   const user = req.user!;
 
-  const certificates = await prisma.certificate.findMany({
-    where: {
-      registration: {
-        userId: user.id,
-      },
-    },
-    include: {
-      registration: {
-        include: {
-          user: true,
-          event: {
-            include: { institution: true },
-          },
+  const [certificates, registrations] = await Promise.all([
+    prisma.certificate.findMany({
+      where: {
+        registration: {
+          userId: user.id,
         },
       },
-      issuedBy: true,
-    },
-    orderBy: { issuedAt: 'desc' },
+      include: {
+        registration: {
+          include: {
+            user: true,
+            team: true,
+            event: {
+              include: { institution: true },
+            },
+          },
+        },
+        issuedBy: true,
+      },
+      orderBy: { issuedAt: 'desc' },
+    }),
+    prisma.registration.findMany({
+      where: {
+        userId: user.id,
+        status: 'CONFIRMED',
+      },
+      include: {
+        event: true,
+        checkIns: {
+          orderBy: { scannedAt: 'asc' },
+          take: 1,
+        },
+        certificate: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+  ]);
+
+  const dtoList: CertificateDTO[] = await Promise.all(
+    certificates.map(async (c) => {
+      const achievement = await resolveTeamAchievement(
+        c.registration.eventId,
+        c.registration.event.type,
+        c.registration.teamId,
+      );
+      return {
+        id: c.id,
+        registrationId: c.registrationId,
+        serial: c.serial,
+        verifyCode: c.verifyCode,
+        issuedById: c.issuedById,
+        issuedAt: c.issuedAt.toISOString(),
+        studentName: c.registration.user.name,
+        studentEmail: c.registration.user.email,
+        studentUsn: c.registration.user.usn,
+        eventTitle: c.registration.event.title,
+        eventStartsAt: c.registration.event.startsAt.toISOString(),
+        eventEndsAt: c.registration.event.endsAt.toISOString(),
+        eventVenue: c.registration.event.venue,
+        institutionName: c.registration.event.institution.name,
+        issuerName: c.issuedBy.name,
+        achievement,
+        teamName: c.registration.team?.name ?? null,
+      };
+    }),
+  );
+
+  const eligibleRegistrations: EligibleCertificateRegistrationDTO[] = registrations.map((r) => {
+    const checkIn = r.checkIns[0];
+    const eventEligible = r.event.status === 'ONGOING' || r.event.status === 'COMPLETED';
+    const hasCheckedIn = !!checkIn;
+    const hasCheckedOut =
+      !!checkIn?.checkedOutAt &&
+      (!r.event.checkoutOpensAt || checkIn.checkedOutAt >= r.event.checkoutOpensAt);
+
+    return {
+      registrationId: r.id,
+      eventId: r.eventId,
+      eventTitle: r.event.title,
+      eventStatus: r.event.status,
+      eventStartsAt: r.event.startsAt.toISOString(),
+      eventEndsAt: r.event.endsAt.toISOString(),
+      checkoutOpensAt: r.event.checkoutOpensAt ? r.event.checkoutOpensAt.toISOString() : null,
+      checkedInAt: checkIn ? checkIn.scannedAt.toISOString() : null,
+      checkedOutAt: checkIn?.checkedOutAt ? checkIn.checkedOutAt.toISOString() : null,
+      canClaim: eventEligible && hasCheckedIn && hasCheckedOut && !r.certificate,
+      certificateId: r.certificate?.id ?? null,
+    };
   });
 
-  const dtoList: CertificateDTO[] = certificates.map((c) => ({
-    id: c.id,
-    registrationId: c.registrationId,
-    serial: c.serial,
-    verifyCode: c.verifyCode,
-    issuedById: c.issuedById,
-    issuedAt: c.issuedAt.toISOString(),
-    studentName: c.registration.user.name,
-    studentEmail: c.registration.user.email,
-    studentUsn: c.registration.user.usn,
-    eventTitle: c.registration.event.title,
-    eventStartsAt: c.registration.event.startsAt.toISOString(),
-    eventEndsAt: c.registration.event.endsAt.toISOString(),
-    eventVenue: c.registration.event.venue,
-    institutionName: c.registration.event.institution.name,
-    issuerName: c.issuedBy.name,
-  }));
-
-  res.json({ certificates: dtoList });
+  res.json({ certificates: dtoList, eligibleRegistrations });
 });
 
 /**
@@ -440,6 +709,7 @@ router.get('/verify/:verifyCode', async (req, res) => {
       registration: {
         include: {
           user: true,
+          team: true,
           event: {
             include: { institution: true },
           },
@@ -460,6 +730,12 @@ router.get('/verify/:verifyCode', async (req, res) => {
     return res.status(404).json(errorResponse);
   }
 
+  const achievement = await resolveTeamAchievement(
+    cert.registration.eventId,
+    cert.registration.event.type,
+    cert.registration.teamId,
+  );
+
   const successResponse: VerifyCertificateResponse = {
     valid: true,
     certificate: {
@@ -473,6 +749,8 @@ router.get('/verify/:verifyCode', async (req, res) => {
       institutionName: cert.registration.event.institution.name,
       issuedAt: cert.issuedAt.toISOString(),
       issuerName: cert.issuedBy.name,
+      achievement,
+      teamName: cert.registration.team?.name ?? null,
     },
   };
 

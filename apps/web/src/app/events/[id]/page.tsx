@@ -9,6 +9,8 @@ import { Badge, ButtonLink, Card } from '@/components/ui';
 import { StatusBadge, TYPE_LABEL } from '../_components/EventBits';
 import { EventActions } from './EventActions';
 import { PublishButton } from './PublishButton';
+import { AnnouncementsPanel } from './AnnouncementsPanel';
+import { CalendarActions } from './CalendarActions';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -28,6 +30,7 @@ export default async function EventPage({ params }: Props) {
   const open =
     (event.status === 'PUBLISHED' || event.status === 'ONGOING') && new Date(event.registrationDeadline) >= new Date();
   const reg = event.myRegistration?.status === 'CONFIRMED' ? event.myRegistration : null;
+  const waitlisted = event.myRegistration?.status === 'WAITLISTED' ? event.myRegistration : null;
 
   return (
     <div className="space-y-7">
@@ -60,22 +63,32 @@ export default async function EventPage({ params }: Props) {
               <p className="text-sm text-slate-400">No description yet.</p>
             )}
           </Card>
+          <AnnouncementsPanel eventId={event.id} canPost={isManager} />
           {event.type === 'HACKATHON' && <HackathonPanel eventId={event.id} />}
         </div>
         <div className="space-y-6">
           <Card className="space-y-3 p-6 text-sm">
             <Row label="Starts" value={formatDateTime(event.startsAt)} />
             <Row label="Ends" value={formatDateTime(event.endsAt)} />
+            {event.checkoutOpensAt && (
+              <Row label="QR Check-out opens" value={formatDateTime(event.checkoutOpensAt)} />
+            )}
             <Row label="Venue" value={event.venue} />
             <Row label="Registration closes" value={formatDateTime(event.registrationDeadline)} />
             <Row
               label="Registered"
               value={`${event.registeredCount ?? 0}${event.capacity !== null ? ` / ${event.capacity}` : ''}`}
             />
+            <CalendarActions event={event} />
           </Card>
           {user?.role === 'STUDENT' && (
             <Card className="space-y-4 p-6">
               {reg && <Badge tone="green">You are registered</Badge>}
+              {waitlisted && (
+                <Badge tone="amber">
+                  On Waitlist{waitlisted.waitlistPosition ? ` (#${waitlisted.waitlistPosition})` : ''}
+                </Badge>
+              )}
               <EventActions event={event} open={open} />
               {reg && <EventPassButton registrationId={reg.id} />}
             </Card>

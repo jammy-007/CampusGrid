@@ -1,20 +1,42 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
-import { createTeamSchema, joinTeamSchema } from '@campusgrid/shared';
+import { createTeamSchema, joinTeamSchema, updateTeamSchema } from '@campusgrid/shared';
 import { prisma } from '../../lib/prisma';
 import { bus } from '../../lib/bus';
 import { parse } from '../../lib/validate';
-import { badRequest, conflict, notFound } from '../../lib/errors';
+import { badRequest, conflict, forbidden, notFound } from '../../lib/errors';
 import { requireAuth, requireRole } from '../../middleware/auth';
 import { assertRegistrationOpen, confirmRegistration, getVisibleEvent, isEventManager, lockEvent } from '../events/service';
 import { generateInviteCode, leaveTeam, teamInclude, toTeamDTO } from './service';
 
 export const router = Router();
 
+/** Lists open teams with available member slots for a team event. */
+router.get('/events/:eventId/open-teams', requireAuth, async (req, res) => {
+  const user = req.user!;
+  const event = await getVisibleEvent(user, req.params.eventId as string);
+  if (!event.isTeamEvent) {
+    return res.json({ teams: [] });
+  }
+
+  const teams = await prisma.team.findMany({
+    where: { eventId: event.id, isOpen: true },
+    include: teamInclude,
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  const openTeams = teams
+    .filter((t) => t.members.length < event.maxTeamSize)
+    .map((t) => toTeamDTO(t, false));
+
+  res.json({ teams: openTeams });
+});
+
 /** Creates a team with the caller as leader; registers them for the event. */
 router.post('/events/:eventId/teams', requireAuth, requireRole('STUDENT'), async (req, res) => {
   const user = req.user!;
-  const { name } = parse(createTeamSchema, req.body);
+  const { name, isOpen } = parse(createTeamSchema, req.body);
   const visible = await getVisibleEvent(user, req.params.eventId as string);
   if (!visible.isTeamEvent) throw badRequest('This event is for individuals; register directly', 'NOT_TEAM_EVENT');
 
@@ -28,7 +50,7 @@ router.post('/events/:eventId/teams', requireAuth, requireRole('STUDENT'), async
           throw conflict('A team with that name already exists for this event', 'TEAM_NAME_TAKEN');
         }
         const team = await tx.team.create({
-          data: { eventId: event.id, name, inviteCode: generateInviteCode(), leaderId: user.id },
+          data: { eventId: event.id, name, inviteCode: generateInviteCode(), leaderId: user.id, isOpen },
         });
         await tx.teamMember.create({ data: { teamId: team.id, userId: user.id } });
         const { registration, created } = await confirmRegistration(tx, event, user.id, team.id);
@@ -53,10 +75,16 @@ router.post('/events/:eventId/teams', requireAuth, requireRole('STUDENT'), async
 
 router.post('/teams/join', requireAuth, requireRole('STUDENT'), async (req, res) => {
   const user = req.user!;
-  const { inviteCode } = parse(joinTeamSchema, req.body);
-  const found = await prisma.team.findUnique({ where: { inviteCode }, include: { event: true } });
+  const { inviteCode, teamId } = parse(joinTeamSchema, req.body);
+  const found = inviteCode
+    ? await prisma.team.findUnique({ where: { inviteCode }, include: { event: true } })
+    : await prisma.team.findUnique({ where: { id: teamId! }, include: { event: true } });
+
   if (!found || found.event.institutionId !== user.institutionId) {
-    throw notFound('No team has that invite code', 'INVALID_INVITE_CODE');
+    throw notFound(inviteCode ? 'No team has that invite code' : 'Team not found', 'INVALID_INVITE_CODE');
+  }
+  if (!inviteCode && !found.isOpen) {
+    throw conflict('This team is invite-only', 'TEAM_CLOSED');
   }
   await getVisibleEvent(user, found.eventId);
 
@@ -74,6 +102,25 @@ router.post('/teams/join', requireAuth, requireRole('STUDENT'), async (req, res)
   bus.emit('team.member_joined', { teamId: found.id, userId: user.id });
   const full = await prisma.team.findUniqueOrThrow({ where: { id: found.id }, include: teamInclude });
   res.json({ team: toTeamDTO(full, true) });
+});
+
+router.patch('/teams/:teamId', requireAuth, async (req, res) => {
+  const user = req.user!;
+  const { isOpen } = parse(updateTeamSchema, req.body);
+  const team = await prisma.team.findUnique({
+    where: { id: req.params.teamId as string },
+    include: { event: true },
+  });
+  if (!team || team.event.institutionId !== user.institutionId) throw notFound('Team not found');
+  if (team.leaderId !== user.id && !isEventManager(user, team.event)) {
+    throw forbidden('Only the team leader can change team settings');
+  }
+  const updated = await prisma.team.update({
+    where: { id: team.id },
+    data: { isOpen },
+    include: teamInclude,
+  });
+  res.json({ team: toTeamDTO(updated, true) });
 });
 
 /** Members, the event's organizer and campus admins can view a team; only members see the invite code. */

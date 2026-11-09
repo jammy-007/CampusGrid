@@ -2,16 +2,18 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
-import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
+import type { Html5Qrcode } from 'html5-qrcode';
 import { apiFetch } from '@/lib/api';
-import type { CheckinBundleDTO, CheckinScanItem, CheckinSyncResponse } from '@campusgrid/shared';
+import type { CheckinBundleDTO, CheckinScanItem, CheckinSyncResponse, ScanType } from '@campusgrid/shared';
 import { Badge, Button, ButtonLink, Card } from '@/components/ui';
 import {
   getCachedBundle,
   getCheckedInSet,
+  getCheckedOutSet,
   getDeviceId,
   getQueuedScans,
   markLocallyCheckedIn,
+  markLocallyCheckedOut,
   queueScan,
   removeQueuedScans,
   saveBundle,
@@ -33,6 +35,9 @@ interface FlashState {
 export function ScannerClient({ eventId }: ScannerClientProps) {
   const [bundle, setBundle] = useState<CheckinBundleDTO | null>(null);
   const [checkedInSet, setCheckedInSet] = useState<Set<string>>(new Set());
+  const [checkedOutSet, setCheckedOutSet] = useState<Set<string>>(new Set());
+  const [scanMode, setScanMode] = useState<ScanType>('CHECK_IN');
+  const [openingCheckout, setOpeningCheckout] = useState<boolean>(false);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isOnline, setIsOnline] = useState<boolean>(true);
@@ -40,7 +45,9 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [manualCode, setManualCode] = useState<string>('');
-  const [recentScans, setRecentScans] = useState<Array<{ id: string; name: string; time: string; success: boolean }>>([]);
+  const [recentScans, setRecentScans] = useState<
+    Array<{ id: string; name: string; time: string; success: boolean; mode: ScanType }>
+  >([]);
 
   const [flash, setFlash] = useState<FlashState>({
     show: false,
@@ -52,6 +59,8 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
   const isProcessingRef = useRef<boolean>(false);
   const bundleRef = useRef<CheckinBundleDTO | null>(null);
   const checkedInSetRef = useRef<Set<string>>(new Set());
+  const checkedOutSetRef = useRef<Set<string>>(new Set());
+  const scanModeRef = useRef<ScanType>('CHECK_IN');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Keep refs synchronized with state
@@ -62,6 +71,14 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
   useEffect(() => {
     checkedInSetRef.current = checkedInSet;
   }, [checkedInSet]);
+
+  useEffect(() => {
+    checkedOutSetRef.current = checkedOutSet;
+  }, [checkedOutSet]);
+
+  useEffect(() => {
+    scanModeRef.current = scanMode;
+  }, [scanMode]);
 
   // Play audio chimes
   const playSound = useCallback((success: boolean) => {
@@ -140,7 +157,12 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
       });
 
       const processedIds = response.results
-        .filter((r) => r.status === 'ACCEPTED' || r.status === 'ALREADY_CHECKED_IN')
+        .filter(
+          (r) =>
+            r.status === 'ACCEPTED' ||
+            r.status === 'ALREADY_CHECKED_IN' ||
+            r.status === 'ALREADY_CHECKED_OUT',
+        )
         .map((r) => r.clientScanId);
 
       await removeQueuedScans(processedIds);
@@ -164,11 +186,15 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
       bundleRef.current = cached;
     }
 
-    const currentChecked = await getCheckedInSet();
-    setCheckedInSet(currentChecked);
-    checkedInSetRef.current = currentChecked;
-
-    const queued = await getQueuedScans();
+    const [currentCheckedIn, currentCheckedOut, queued] = await Promise.all([
+      getCheckedInSet(),
+      getCheckedOutSet(),
+      getQueuedScans(),
+    ]);
+    setCheckedInSet(currentCheckedIn);
+    checkedInSetRef.current = currentCheckedIn;
+    setCheckedOutSet(currentCheckedOut);
+    checkedOutSetRef.current = currentCheckedOut;
     setPendingSyncCount(queued.length);
 
     // 2. Fetch fresh bundle from server if online
@@ -177,12 +203,42 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
       setBundle(serverBundle);
       bundleRef.current = serverBundle;
       await saveBundle(serverBundle);
-      const updatedChecked = await getCheckedInSet();
-      setCheckedInSet(updatedChecked);
-      checkedInSetRef.current = updatedChecked;
+      const [updatedCheckedIn, updatedCheckedOut] = await Promise.all([
+        getCheckedInSet(),
+        getCheckedOutSet(),
+      ]);
+      setCheckedInSet(updatedCheckedIn);
+      checkedInSetRef.current = updatedCheckedIn;
+      setCheckedOutSet(updatedCheckedOut);
+      checkedOutSetRef.current = updatedCheckedOut;
       setIsOnline(true);
     } catch {
       setIsOnline(false);
+    }
+  }, [eventId]);
+
+  const handleOpenCheckoutNow = useCallback(async () => {
+    setOpeningCheckout(true);
+    try {
+      const res = await apiFetch<{ checkoutOpensAt: string }>(
+        `/api/events/${eventId}/checkin/open-checkout`,
+        { method: 'POST' },
+      );
+      if (bundleRef.current) {
+        const updatedBundle: CheckinBundleDTO = {
+          ...bundleRef.current,
+          checkoutOpensAt: res.checkoutOpensAt,
+        };
+        setBundle(updatedBundle);
+        bundleRef.current = updatedBundle;
+        await saveBundle(updatedBundle);
+      }
+      setScanMode('CHECK_OUT');
+      scanModeRef.current = 'CHECK_OUT';
+    } catch {
+      // Ignore
+    } finally {
+      setOpeningCheckout(false);
     }
   }, [eventId]);
 
@@ -249,7 +305,15 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
       }
 
       const activeCheckedSet = checkedInSetRef.current;
-      const result: ScanVerificationResult = await verifyScanToken(decodedText, activeBundle, activeCheckedSet);
+      const activeCheckedOutSet = checkedOutSetRef.current;
+      const currentMode = scanModeRef.current;
+      const result: ScanVerificationResult = await verifyScanToken(
+        decodedText,
+        activeBundle,
+        activeCheckedSet,
+        activeCheckedOutSet,
+        currentMode,
+      );
 
       if (result.valid && result.attendee) {
         // Success
@@ -260,16 +324,22 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
           rid: result.attendee.rid,
           scannedAt: new Date().toISOString(),
           deviceId: getDeviceId(),
+          scanType: currentMode,
         };
 
         // Queue in IndexedDB
         await queueScan(newScan);
-        await markLocallyCheckedIn(result.attendee.rid);
-
-        // Update local set to prevent duplicate immediate scan
-        const nextSet = new Set([...activeCheckedSet, result.attendee.rid]);
-        setCheckedInSet(nextSet);
-        checkedInSetRef.current = nextSet;
+        if (currentMode === 'CHECK_OUT') {
+          await markLocallyCheckedOut(result.attendee.rid);
+          const nextOutSet = new Set([...activeCheckedOutSet, result.attendee.rid]);
+          setCheckedOutSet(nextOutSet);
+          checkedOutSetRef.current = nextOutSet;
+        } else {
+          await markLocallyCheckedIn(result.attendee.rid);
+          const nextInSet = new Set([...activeCheckedSet, result.attendee.rid]);
+          setCheckedInSet(nextInSet);
+          checkedInSetRef.current = nextInSet;
+        }
         setPendingSyncCount((prev) => prev + 1);
 
         setRecentScans((prev) => [
@@ -278,6 +348,7 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
             name: result.attendee!.name,
             time: new Date().toLocaleTimeString(),
             success: true,
+            mode: currentMode,
           },
           ...prev.slice(0, 9),
         ]);
@@ -288,7 +359,7 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
           success: true,
           name: result.attendee.name,
           usn: result.attendee.usn,
-          message: 'CHECK-IN CONFIRMED',
+          message: currentMode === 'CHECK_OUT' ? 'CHECK-OUT CONFIRMED (OD ELIGIBLE)' : 'CHECK-IN CONFIRMED',
         });
 
         // Trigger immediate background sync
@@ -305,6 +376,7 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
             name: displayName,
             time: new Date().toLocaleTimeString(),
             success: false,
+            mode: currentMode,
           },
           ...prev.slice(0, 9),
         ]);
@@ -338,8 +410,10 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
         const container = document.getElementById('qr-reader-container');
         if (!container) return;
 
+        const { Html5Qrcode: Html5QrcodeClass, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+
         if (!scannerRef.current) {
-          scannerRef.current = new Html5Qrcode('qr-reader-container', {
+          scannerRef.current = new Html5QrcodeClass('qr-reader-container', {
             formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
             verbose: false,
           });
@@ -372,7 +446,7 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
             setCameraFacing(altFacing);
           } catch {
             // Try deviceId fallback if facingMode is unsupported
-            const devices = await Html5Qrcode.getCameras().catch(() => []);
+            const devices = await Html5QrcodeClass.getCameras().catch(() => []);
             if (devices && devices.length > 0) {
               await scanner.start(devices[0].id, config, onScanSuccess, () => {});
             } else {
@@ -439,7 +513,8 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
 
     try {
       if (!scannerRef.current) {
-        scannerRef.current = new Html5Qrcode('qr-reader-container', {
+        const { Html5Qrcode: Html5QrcodeClass, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+        scannerRef.current = new Html5QrcodeClass('qr-reader-container', {
           formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
           verbose: false,
         });
@@ -536,6 +611,61 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
         </div>
       </Card>
 
+      {/* Scan Mode Toggle: Check-In vs Check-Out */}
+      <Card className="p-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex rounded-xl bg-slate-950/80 p-1 ring-1 ring-white/10">
+            <button
+              type="button"
+              onClick={() => setScanMode('CHECK_IN')}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                scanMode === 'CHECK_IN'
+                  ? 'bg-emerald-600 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              1. Entry Check-In
+            </button>
+            <button
+              type="button"
+              onClick={() => setScanMode('CHECK_OUT')}
+              className={`rounded-lg px-4 py-2 text-xs font-semibold transition ${
+                scanMode === 'CHECK_OUT'
+                  ? 'bg-sky-500 text-white shadow'
+                  : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              2. Exit Check-Out (OD Unlock)
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            {bundle?.checkoutOpensAt ? (
+              new Date() < new Date(bundle.checkoutOpensAt) ? (
+                <div className="flex items-center gap-2.5">
+                  <span className="text-amber-300">
+                    Check-out opens at{' '}
+                    <strong>{new Date(bundle.checkoutOpensAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={openingCheckout}
+                    onClick={handleOpenCheckoutNow}
+                  >
+                    Open Check-Out Now
+                  </Button>
+                </div>
+              ) : (
+                <Badge tone="green">Check-Out Window Open</Badge>
+              )
+            ) : (
+              <Badge tone="green">Check-Out Open Anytime</Badge>
+            )}
+          </div>
+        </div>
+      </Card>
+
       {/* Roster & Stats Summary */}
       {bundle && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
@@ -544,14 +674,12 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
             <p className="mt-1 text-2xl font-bold text-white">{bundle.registrations.length}</p>
           </Card>
           <Card className="p-4">
-            <span className="text-xs font-medium text-slate-400">Checked In</span>
+            <span className="text-xs font-medium text-slate-400">Checked In (Entry)</span>
             <p className="mt-1 text-2xl font-bold text-emerald-400">{checkedInSet.size}</p>
           </Card>
           <Card className="col-span-2 sm:col-span-1 p-4">
-            <span className="text-xs font-medium text-slate-400">Remaining</span>
-            <p className="mt-1 text-2xl font-bold text-slate-300">
-              {Math.max(0, bundle.registrations.length - checkedInSet.size)}
-            </p>
+            <span className="text-xs font-medium text-slate-400">Checked Out (OD Eligible)</span>
+            <p className="mt-1 text-2xl font-bold text-sky-400">{checkedOutSet.size}</p>
           </Card>
         </div>
       )}
@@ -702,6 +830,9 @@ export function ScannerClient({ eventId }: ScannerClientProps) {
                   <span className="font-semibold text-white">{s.name}</span>
                 </div>
                 <div className="flex items-center gap-3 text-slate-400">
+                  <Badge tone={s.mode === 'CHECK_OUT' ? 'brand' : 'neutral'}>
+                    {s.mode === 'CHECK_OUT' ? 'CHECK-OUT' : 'CHECK-IN'}
+                  </Badge>
                   <span className="font-mono text-[11px]">{s.time}</span>
                   <Badge tone={s.success ? 'green' : 'red'}>
                     {s.success ? 'ACCEPTED' : 'REJECTED'}

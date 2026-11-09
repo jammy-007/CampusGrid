@@ -8,9 +8,31 @@ export const EVENT_STATUSES = ['DRAFT', 'PUBLISHED', 'ONGOING', 'COMPLETED'] as 
 export const eventStatusSchema = z.enum(EVENT_STATUSES);
 export type EventStatus = z.infer<typeof eventStatusSchema>;
 
-export const REGISTRATION_STATUSES = ['CONFIRMED', 'CANCELLED'] as const;
+export const REGISTRATION_STATUSES = ['CONFIRMED', 'WAITLISTED', 'CANCELLED'] as const;
 export const registrationStatusSchema = z.enum(REGISTRATION_STATUSES);
 export type RegistrationStatus = z.infer<typeof registrationStatusSchema>;
+
+export const ANNOUNCEMENT_PRIORITIES = ['INFO', 'IMPORTANT', 'URGENT'] as const;
+export const announcementPrioritySchema = z.enum(ANNOUNCEMENT_PRIORITIES);
+export type AnnouncementPriority = z.infer<typeof announcementPrioritySchema>;
+
+export const createAnnouncementSchema = z.object({
+  title: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(2000),
+  priority: announcementPrioritySchema.default('INFO'),
+});
+export type CreateAnnouncementInput = z.infer<typeof createAnnouncementSchema>;
+
+export interface EventAnnouncementDTO {
+  id: string;
+  eventId: string;
+  authorId: string;
+  authorName: string;
+  title: string;
+  body: string;
+  priority: AnnouncementPriority;
+  createdAt: string;
+}
 
 // No defaults here: PATCH must not reset omitted fields.
 const eventFields = z.object({
@@ -20,6 +42,7 @@ const eventFields = z.object({
   venue: z.string().trim().min(1).max(200),
   startsAt: z.coerce.date(),
   endsAt: z.coerce.date(),
+  checkoutOpensAt: z.coerce.date().nullable().optional(),
   registrationDeadline: z.coerce.date(),
   isTeamEvent: z.boolean(),
   minTeamSize: z.number().int().min(1).max(20),
@@ -39,6 +62,22 @@ function checkEventRules(e: EventFieldsShape, ctx: z.RefinementCtx) {
       path: ['registrationDeadline'],
       message: 'Registration deadline must be on or before the end',
     });
+  }
+  if (e.checkoutOpensAt) {
+    if (e.startsAt && e.checkoutOpensAt < e.startsAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['checkoutOpensAt'],
+        message: 'Check-out time must be on or after the event start',
+      });
+    }
+    if (e.endsAt && e.checkoutOpensAt > e.endsAt) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['checkoutOpensAt'],
+        message: 'Check-out time must be on or before the event end',
+      });
+    }
   }
   if (e.minTeamSize !== undefined && e.maxTeamSize !== undefined && e.minTeamSize > e.maxTeamSize) {
     ctx.addIssue({ code: 'custom', path: ['maxTeamSize'], message: 'Max team size must be ≥ min team size' });
@@ -89,6 +128,7 @@ export interface EventDTO {
   venue: string;
   startsAt: string;
   endsAt: string;
+  checkoutOpensAt?: string | null;
   registrationDeadline: string;
   isTeamEvent: boolean;
   minTeamSize: number;
@@ -105,6 +145,7 @@ export interface MyRegistrationDTO {
   id: string;
   status: RegistrationStatus;
   teamId: string | null;
+  waitlistPosition?: number;
 }
 
 export interface RegistrationDTO {

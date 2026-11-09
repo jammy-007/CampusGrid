@@ -1,4 +1,11 @@
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
+
+try {
+  process.loadEnvFile?.(path.resolve(process.cwd(), '../../.env'));
+} catch {
+  // Ignore if root .env is absent
+}
 
 /** Tests run against a separate database: TEST_DATABASE_URL, or DATABASE_URL with "_test" appended to the db name. */
 function testDatabaseUrl(): string {

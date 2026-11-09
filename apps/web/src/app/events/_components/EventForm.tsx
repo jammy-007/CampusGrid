@@ -21,6 +21,7 @@ export function EventForm({ event }: { event?: EventDTO }) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const date = (k: string) => new Date(String(f.get(k))).toISOString();
+    const checkoutRaw = String(f.get('checkoutOpensAt') ?? '').trim();
     const capacity = String(f.get('capacity') ?? '').trim();
     const body = {
       title: f.get('title'),
@@ -29,6 +30,7 @@ export function EventForm({ event }: { event?: EventDTO }) {
       venue: f.get('venue'),
       startsAt: date('startsAt'),
       endsAt: date('endsAt'),
+      checkoutOpensAt: checkoutRaw ? new Date(checkoutRaw).toISOString() : null,
       registrationDeadline: date('registrationDeadline'),
       isTeamEvent,
       minTeamSize: isTeamEvent ? Number(f.get('minTeamSize')) : 1,
@@ -73,7 +75,7 @@ export function EventForm({ event }: { event?: EventDTO }) {
           <Input label="Venue" name="venue" required defaultValue={event?.venue} error={fieldErrors.venue} />
         </div>
         <Textarea label="Description" name="description" defaultValue={event?.description} rows={5} />
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
           <Input
             label="Starts"
             name="startsAt"
@@ -89,6 +91,16 @@ export function EventForm({ event }: { event?: EventDTO }) {
             required
             defaultValue={toLocalInput(event?.endsAt ?? new Date(now.getTime() + 7 * 864e5 + 3 * 36e5))}
             error={fieldErrors.endsAt}
+          />
+          <Input
+            label="Check-out opens at"
+            name="checkoutOpensAt"
+            type="datetime-local"
+            defaultValue={toLocalInput(
+              event?.checkoutOpensAt ?? new Date(now.getTime() + 7 * 864e5 + 2.5 * 36e5),
+            )}
+            hint="Students must scan QR at/after this time to claim OD certificates"
+            error={fieldErrors.checkoutOpensAt}
           />
           <Input
             label="Registration closes"

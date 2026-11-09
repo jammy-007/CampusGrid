@@ -37,7 +37,7 @@ export async function getVisibleEvent(user: SessionUser, eventId: string) {
 
 export function toEventDTO(
   event: Event & { organizer?: { name: string } | null },
-  extra: { registeredCount?: number; myRegistration?: Registration | null } = {},
+  extra: { registeredCount?: number; myRegistration?: (Registration & { waitlistPosition?: number }) | null } = {},
 ): EventDTO {
   const my: MyRegistrationDTO | null | undefined =
     extra.myRegistration === undefined
@@ -46,6 +46,9 @@ export function toEventDTO(
           id: extra.myRegistration.id,
           status: extra.myRegistration.status,
           teamId: extra.myRegistration.teamId,
+          ...(extra.myRegistration.waitlistPosition !== undefined
+            ? { waitlistPosition: extra.myRegistration.waitlistPosition }
+            : {}),
         };
   return {
     id: event.id,
@@ -58,6 +61,7 @@ export function toEventDTO(
     venue: event.venue,
     startsAt: event.startsAt.toISOString(),
     endsAt: event.endsAt.toISOString(),
+    checkoutOpensAt: event.checkoutOpensAt ? event.checkoutOpensAt.toISOString() : null,
     registrationDeadline: event.registrationDeadline.toISOString(),
     isTeamEvent: event.isTeamEvent,
     minTeamSize: event.minTeamSize,
@@ -111,17 +115,62 @@ export async function assertCapacity(tx: Tx, event: Event) {
 
 /**
  * Confirms the user's registration for the event (creating it, or reviving a cancelled one),
- * enforcing capacity. Returns the registration and whether it is newly confirmed.
+ * enforcing capacity. When `allowWaitlist` is true and the event is full, places the user
+ * on the waitlist (`WAITLISTED`).
  */
-export async function confirmRegistration(tx: Tx, event: Event, userId: string, teamId: string | null) {
+export async function confirmRegistration(
+  tx: Tx,
+  event: Event,
+  userId: string,
+  teamId: string | null,
+  allowWaitlist = false,
+) {
   const existing = await tx.registration.findUnique({ where: { eventId_userId: { eventId: event.id, userId } } });
   if (existing?.status === 'CONFIRMED') {
     const registration = await tx.registration.update({ where: { id: existing.id }, data: { teamId } });
     return { registration, created: false };
   }
-  await assertCapacity(tx, event);
+  if (existing?.status === 'WAITLISTED' && allowWaitlist) {
+    return { registration: existing, created: false };
+  }
+
+  let isFull = false;
+  if (event.capacity !== null) {
+    const taken = await tx.registration.count({ where: { eventId: event.id, status: 'CONFIRMED' } });
+    isFull = taken >= event.capacity;
+  }
+
+  if (isFull && !allowWaitlist) {
+    throw conflict('This event is full', 'EVENT_FULL');
+  }
+
+  const targetStatus = isFull ? 'WAITLISTED' : 'CONFIRMED';
   const registration = existing
-    ? await tx.registration.update({ where: { id: existing.id }, data: { status: 'CONFIRMED', teamId } })
-    : await tx.registration.create({ data: { eventId: event.id, userId, teamId } });
+    ? await tx.registration.update({
+        where: { id: existing.id },
+        data: { status: targetStatus, teamId, createdAt: new Date() },
+      })
+    : await tx.registration.create({ data: { eventId: event.id, userId, teamId, status: targetStatus } });
   return { registration, created: true };
+}
+
+/**
+ * Promotes the earliest WAITLISTED registration for an event to CONFIRMED when a spot opens up.
+ */
+export async function promoteNextWaitlisted(tx: Tx, event: Event): Promise<Registration | null> {
+  if (event.capacity !== null) {
+    const taken = await tx.registration.count({ where: { eventId: event.id, status: 'CONFIRMED' } });
+    if (taken >= event.capacity) return null;
+  }
+
+  const nextInLine = await tx.registration.findFirst({
+    where: { eventId: event.id, status: 'WAITLISTED' },
+    orderBy: { createdAt: 'asc' },
+  });
+  if (!nextInLine) return null;
+
+  return tx.registration.update({
+    where: { id: nextInLine.id },
+    data: { status: 'CONFIRMED' },
+  });
 }

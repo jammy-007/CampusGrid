@@ -187,7 +187,7 @@ describe('Passes & Ed25519 Token Signing / Verification', () => {
     expect(result.reason).toBe('WRONG_EVENT');
   });
 
-  it('validates checkinSyncRequestSchema', () => {
+  it('validates checkinSyncRequestSchema with CHECK_IN and CHECK_OUT scan types', () => {
     const valid = {
       scans: [
         {
@@ -196,9 +196,21 @@ describe('Passes & Ed25519 Token Signing / Verification', () => {
           scannedAt: new Date().toISOString(),
           deviceId: 'device-phone',
         },
+        {
+          clientScanId: 'uuid-2',
+          rid: 'reg-1',
+          scannedAt: new Date().toISOString(),
+          deviceId: 'device-phone',
+          scanType: 'CHECK_OUT',
+        },
       ],
     };
-    expect(checkinSyncRequestSchema.safeParse(valid).success).toBe(true);
+    const parsed = checkinSyncRequestSchema.safeParse(valid);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.scans[0].scanType).toBe('CHECK_IN');
+      expect(parsed.data.scans[1].scanType).toBe('CHECK_OUT');
+    }
     expect(checkinSyncRequestSchema.safeParse({ scans: [{ clientScanId: '' }] }).success).toBe(false);
   });
 });

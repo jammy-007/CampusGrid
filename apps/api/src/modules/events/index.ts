@@ -1,16 +1,19 @@
 import { Router } from 'express';
 import type { Prisma } from '@prisma/client';
 import {
+  createAnnouncementSchema,
   createEventSchema,
   EVENT_STATUS_FLOW,
   eventListQuerySchema,
   updateEventSchema,
+  type EventAnnouncementDTO,
   type EventStatus,
 } from '@campusgrid/shared';
 import { prisma } from '../../lib/prisma';
 import { parse } from '../../lib/validate';
 import { badRequest, conflict } from '../../lib/errors';
 import { requireAuth, requireEventOrganizer, requireRole } from '../../middleware/auth';
+import { getIO } from '../../realtime/io';
 import { confirmedCounts, getVisibleEvent, toEventDTO, visibleEventsWhere } from './service';
 
 export const router = Router();
@@ -59,6 +62,7 @@ router.post('/events', requireAuth, requireRole('ORGANIZER', 'ADMIN'), async (re
     data: {
       ...input,
       ...team,
+      checkoutOpensAt: input.checkoutOpensAt ?? null,
       capacity: input.capacity ?? null,
       institutionId: user.institutionId,
       organizerId: user.id,
@@ -77,9 +81,88 @@ router.get('/events/:eventId', requireAuth, async (req, res) => {
     confirmedCounts([event.id]),
     prisma.registration.findUnique({ where: { eventId_userId: { eventId: event.id, userId: user.id } } }),
   ]);
+
+  let waitlistPosition: number | undefined;
+  if (myRegistration?.status === 'WAITLISTED') {
+    waitlistPosition =
+      (await prisma.registration.count({
+        where: {
+          eventId: event.id,
+          status: 'WAITLISTED',
+          createdAt: { lt: myRegistration.createdAt },
+        },
+      })) + 1;
+  }
+
   res.json({
-    event: toEventDTO({ ...event, organizer }, { registeredCount: counts.get(event.id) ?? 0, myRegistration }),
+    event: toEventDTO(
+      { ...event, organizer },
+      {
+        registeredCount: counts.get(event.id) ?? 0,
+        myRegistration: myRegistration ? { ...myRegistration, waitlistPosition } : null,
+      },
+    ),
   });
+});
+
+router.get('/events/:eventId/announcements', requireAuth, async (req, res) => {
+  const user = req.user!;
+  const event = await getVisibleEvent(user, req.params.eventId as string);
+  const rows = await prisma.eventAnnouncement.findMany({
+    where: { eventId: event.id },
+    include: { author: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+
+  const announcements: EventAnnouncementDTO[] = rows.map((a) => ({
+    id: a.id,
+    eventId: a.eventId,
+    authorId: a.authorId,
+    authorName: a.author.name,
+    title: a.title,
+    body: a.body,
+    priority: a.priority,
+    createdAt: a.createdAt.toISOString(),
+  }));
+
+  res.json({ announcements });
+});
+
+router.post('/events/:eventId/announcements', requireAuth, requireEventOrganizer(), async (req, res) => {
+  const user = req.user!;
+  const eventId = req.params.eventId as string;
+  const input = parse(createAnnouncementSchema, req.body);
+
+  const created = await prisma.eventAnnouncement.create({
+    data: {
+      eventId,
+      authorId: user.id,
+      title: input.title,
+      body: input.body,
+      priority: input.priority,
+    },
+    include: { author: { select: { name: true } } },
+  });
+
+  const dto: EventAnnouncementDTO = {
+    id: created.id,
+    eventId: created.eventId,
+    authorId: created.authorId,
+    authorName: created.author.name,
+    title: created.title,
+    body: created.body,
+    priority: created.priority,
+    createdAt: created.createdAt.toISOString(),
+  };
+
+  try {
+    getIO().of('/live').to(`event:${eventId}`).emit('announcement:new', dto);
+  } catch {
+    // Socket server may not be initialized in unit tests
+  }
+
+  res.status(201).json({ announcement: dto });
 });
 
 router.patch('/events/:eventId', requireAuth, requireEventOrganizer(), async (req, res) => {
@@ -95,6 +178,7 @@ router.patch('/events/:eventId', requireAuth, requireEventOrganizer(), async (re
   const check = updateEventSchema.safeParse({
     startsAt: merged.startsAt,
     endsAt: merged.endsAt,
+    checkoutOpensAt: merged.checkoutOpensAt,
     registrationDeadline: merged.registrationDeadline,
     minTeamSize: merged.minTeamSize,
     maxTeamSize: merged.maxTeamSize,

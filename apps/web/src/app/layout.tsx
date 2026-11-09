@@ -39,6 +39,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
             mouseInteraction={true}
             scrambleRadius={0.18}
             clickEffect="wave"
+            dpr={1.25}
           />
           <div
             aria-hidden="true"
