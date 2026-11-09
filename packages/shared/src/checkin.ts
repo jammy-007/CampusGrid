@@ -12,9 +12,15 @@ export interface CheckinAttendeeDTO {
 export interface CheckinBundleDTO {
   publicKey: string;
   eventId: string;
+  checkoutOpensAt?: string | null;
   registrations: CheckinAttendeeDTO[];
   alreadyCheckedIn: string[];
+  alreadyCheckedOut?: string[];
 }
+
+export const SCAN_TYPES = ['CHECK_IN', 'CHECK_OUT'] as const;
+export const scanTypeSchema = z.enum(SCAN_TYPES);
+export type ScanType = z.infer<typeof scanTypeSchema>;
 
 /** Single scan payload queued by the client scanner. */
 export const checkinScanItemSchema = z.object({
@@ -22,6 +28,7 @@ export const checkinScanItemSchema = z.object({
   rid: z.string().min(1),
   scannedAt: z.union([z.string(), z.date()]).transform((val) => new Date(val).toISOString()),
   deviceId: z.string().min(1),
+  scanType: scanTypeSchema.optional().default('CHECK_IN'),
 });
 export type CheckinScanItem = z.infer<typeof checkinScanItemSchema>;
 
@@ -31,7 +38,13 @@ export const checkinSyncRequestSchema = z.object({
 });
 export type CheckinSyncRequest = z.infer<typeof checkinSyncRequestSchema>;
 
-export type CheckinScanStatus = 'ACCEPTED' | 'ALREADY_CHECKED_IN' | 'REJECTED';
+export type CheckinScanStatus =
+  | 'ACCEPTED'
+  | 'ALREADY_CHECKED_IN'
+  | 'ALREADY_CHECKED_OUT'
+  | 'NOT_CHECKED_IN'
+  | 'CHECKOUT_TOO_EARLY'
+  | 'REJECTED';
 
 export interface CheckinScanResult {
   clientScanId: string;
@@ -43,6 +56,7 @@ export interface CheckinScanResult {
 export interface CheckinSyncResponse {
   results: CheckinScanResult[];
   checkedInCount: number;
+  checkedOutCount?: number;
   registeredCount: number;
 }
 
@@ -57,13 +71,18 @@ export interface AttendanceAttendeeDTO {
   checkedIn: boolean;
   scannedAt: string | null;
   scannedByName: string | null;
+  checkedOut?: boolean;
+  checkedOutAt?: string | null;
+  checkedOutByName?: string | null;
 }
 
 /** Response for GET /api/events/:eventId/attendance */
 export interface AttendanceDTO {
   eventId: string;
   title: string;
+  checkoutOpensAt?: string | null;
   registeredCount: number;
   checkedInCount: number;
+  checkedOutCount?: number;
   attendees: AttendanceAttendeeDTO[];
 }

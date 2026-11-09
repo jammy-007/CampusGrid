@@ -5,7 +5,7 @@ import { TeamChat } from '@/features/chat';
 import { apiServer } from '@/lib/server';
 import { getSession } from '@/lib/session';
 import { Badge, Card } from '@/components/ui';
-import { CopyInviteCode, MemberActions } from './TeamClient';
+import { CopyInviteCode, MemberActions, OpenTeamToggle } from './TeamClient';
 
 export const metadata: Metadata = { title: 'Team' };
 
@@ -31,6 +31,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
               <p className="text-sm text-slate-500">Invite code</p>
               <CopyInviteCode code={team.inviteCode} />
               <p className="text-xs text-slate-500">Share this with teammates so they can join from the event page.</p>
+              <OpenTeamToggle teamId={team.id} initialIsOpen={team.isOpen ?? true} canEdit={isLeader} />
             </Card>
           )}
           <Card className="space-y-3">

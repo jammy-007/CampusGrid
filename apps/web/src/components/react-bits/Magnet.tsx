@@ -1,7 +1,6 @@
 'use client';
 
-import { type HTMLAttributes, type MouseEvent, type ReactNode, useEffect, useRef } from 'react';
-import gsap from 'gsap';
+import { type HTMLAttributes, type MouseEvent, type ReactNode, useRef } from 'react';
 import { cn } from '@/lib/cn';
 
 export interface MagnetProps extends HTMLAttributes<HTMLDivElement> {
@@ -19,43 +18,27 @@ export function Magnet({
 }: MagnetProps) {
   const magnetRef = useRef<HTMLDivElement>(null);
   const innerRef = useRef<HTMLDivElement>(null);
-  const xToRef = useRef<gsap.QuickToFunc | null>(null);
-  const yToRef = useRef<gsap.QuickToFunc | null>(null);
-
-  useEffect(() => {
-    const inner = innerRef.current;
-    if (!inner || disabled) return;
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
-
-    xToRef.current = gsap.quickTo(inner, 'x', { duration: 0.45, ease: 'power3.out' });
-    yToRef.current = gsap.quickTo(inner, 'y', { duration: 0.45, ease: 'power3.out' });
-
-    return () => {
-      gsap.killTweensOf(inner);
-    };
-  }, [disabled]);
 
   const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
     const el = magnetRef.current;
-    if (!el || disabled || !xToRef.current || !yToRef.current) return;
+    const inner = innerRef.current;
+    if (!el || !inner || disabled) return;
+    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+
     const rect = el.getBoundingClientRect();
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
     const distX = (e.clientX - centerX) / magnetStrength;
     const distY = (e.clientY - centerY) / magnetStrength;
-    xToRef.current(distX);
-    yToRef.current(distY);
+    inner.style.transition = 'transform 180ms cubic-bezier(0.215, 0.61, 0.355, 1)';
+    inner.style.transform = `translate3d(${distX.toFixed(2)}px, ${distY.toFixed(2)}px, 0)`;
   };
 
   const handleMouseLeave = () => {
     const inner = innerRef.current;
     if (!inner || disabled) return;
-    gsap.to(inner, {
-      x: 0,
-      y: 0,
-      duration: 0.65,
-      ease: 'elastic.out(1, 0.4)',
-    });
+    inner.style.transition = 'transform 450ms cubic-bezier(0.34, 1.56, 0.64, 1)';
+    inner.style.transform = 'translate3d(0px, 0px, 0)';
   };
 
   return (

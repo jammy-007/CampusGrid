@@ -15,12 +15,29 @@ export interface CertificateDTO {
   eventVenue?: string;
   institutionName: string;
   issuerName: string;
+  achievement?: string | null;
+  teamName?: string | null;
 }
 
 /** Response for POST /api/events/:eventId/certificates/issue */
 export interface IssueCertificatesResponse {
   count: number;
   certificates: CertificateDTO[];
+}
+
+/** Student attendance & certificate claim eligibility for a registered event */
+export interface EligibleCertificateRegistrationDTO {
+  registrationId: string;
+  eventId: string;
+  eventTitle: string;
+  eventStatus: string;
+  eventStartsAt: string;
+  eventEndsAt: string;
+  checkoutOpensAt: string | null;
+  checkedInAt: string | null;
+  checkedOutAt: string | null;
+  canClaim: boolean;
+  certificateId: string | null;
 }
 
 /** Response for public GET /api/verify/:verifyCode */
@@ -37,6 +54,8 @@ export interface VerifyCertificateResponse {
     institutionName: string;
     issuedAt: string;
     issuerName: string;
+    achievement?: string | null;
+    teamName?: string | null;
   };
   error?: {
     code: string;

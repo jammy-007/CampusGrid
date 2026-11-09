@@ -50,6 +50,11 @@ export default async function VerifyCertificatePage({ params }: VerifyPageProps)
             </span>
             <h1 className="mt-2 text-2xl font-black">Genuine Certificate</h1>
             <p className="mt-1 font-mono text-sm text-emerald-100">{cert.serial}</p>
+            {cert.achievement && (
+              <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-amber-400 px-3.5 py-1 text-xs font-extrabold uppercase tracking-wider text-amber-950 shadow">
+                🏆 {cert.achievement}
+              </div>
+            )}
           </div>
 
           {/* Certificate Data Grid */}
@@ -59,6 +64,20 @@ export default async function VerifyCertificatePage({ params }: VerifyPageProps)
                 <span className="text-slate-500">Student Name</span>
                 <span className="font-bold text-slate-900">{cert.studentName}</span>
               </div>
+
+              {cert.teamName && (
+                <div className="flex justify-between border-b border-slate-200/60 pb-2">
+                  <span className="text-slate-500">Team</span>
+                  <span className="font-bold text-slate-900">{cert.teamName}</span>
+                </div>
+              )}
+
+              {cert.achievement && (
+                <div className="flex justify-between border-b border-slate-200/60 pb-2">
+                  <span className="text-slate-500">Merit / Distinction</span>
+                  <span className="font-extrabold text-amber-700">🏆 {cert.achievement}</span>
+                </div>
+              )}
 
               {cert.usn && (
                 <div className="flex justify-between border-b border-slate-200/60 pb-2">

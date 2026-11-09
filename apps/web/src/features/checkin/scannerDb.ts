@@ -2,7 +2,7 @@ import { openDB, type IDBPDatabase } from 'idb';
 import type { CheckinBundleDTO, CheckinScanItem } from '@campusgrid/shared';
 
 const DB_NAME = 'campusgrid-scanner';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -18,6 +18,9 @@ function getDb(): Promise<IDBPDatabase> {
         }
         if (!db.objectStoreNames.contains('localCheckedIn')) {
           db.createObjectStore('localCheckedIn', { keyPath: 'rid' });
+        }
+        if (!db.objectStoreNames.contains('localCheckedOut')) {
+          db.createObjectStore('localCheckedOut', { keyPath: 'rid' });
         }
       },
     });
@@ -41,10 +44,15 @@ export async function saveBundle(bundle: CheckinBundleDTO): Promise<void> {
   const db = await getDb();
   await db.put('bundles', bundle);
 
-  // Seed localCheckedIn store with alreadyCheckedIn list from bundle
-  const tx = db.transaction('localCheckedIn', 'readwrite');
+  // Seed localCheckedIn and localCheckedOut stores from bundle
+  const tx = db.transaction(['localCheckedIn', 'localCheckedOut'], 'readwrite');
+  const inStore = tx.objectStore('localCheckedIn');
+  const outStore = tx.objectStore('localCheckedOut');
   for (const rid of bundle.alreadyCheckedIn) {
-    await tx.store.put({ rid, scannedAt: new Date().toISOString() });
+    await inStore.put({ rid, scannedAt: new Date().toISOString() });
+  }
+  for (const rid of bundle.alreadyCheckedOut ?? []) {
+    await outStore.put({ rid, scannedAt: new Date().toISOString() });
   }
   await tx.done;
 }
@@ -58,9 +66,11 @@ export async function getCachedBundle(eventId: string): Promise<CheckinBundleDTO
 /** Queue an accepted scan */
 export async function queueScan(scan: CheckinScanItem): Promise<void> {
   const db = await getDb();
-  const tx = db.transaction(['scanQueue', 'localCheckedIn'], 'readwrite');
+  const isCheckout = scan.scanType === 'CHECK_OUT';
+  const targetStore = isCheckout ? 'localCheckedOut' : 'localCheckedIn';
+  const tx = db.transaction(['scanQueue', targetStore], 'readwrite');
   await tx.objectStore('scanQueue').put(scan);
-  await tx.objectStore('localCheckedIn').put({ rid: scan.rid, scannedAt: scan.scannedAt });
+  await tx.objectStore(targetStore).put({ rid: scan.rid, scannedAt: scan.scannedAt });
   await tx.done;
 }
 
@@ -87,8 +97,21 @@ export async function getCheckedInSet(): Promise<Set<string>> {
   return new Set(items.map((i: { rid: string }) => i.rid));
 }
 
+/** Get set of all registration IDs that have been checked out (cached + local) */
+export async function getCheckedOutSet(): Promise<Set<string>> {
+  const db = await getDb();
+  const items = await db.getAll('localCheckedOut');
+  return new Set(items.map((i: { rid: string }) => i.rid));
+}
+
 /** Mark an attendee checked in locally */
 export async function markLocallyCheckedIn(rid: string): Promise<void> {
   const db = await getDb();
   await db.put('localCheckedIn', { rid, scannedAt: new Date().toISOString() });
+}
+
+/** Mark an attendee checked out locally */
+export async function markLocallyCheckedOut(rid: string): Promise<void> {
+  const db = await getDb();
+  await db.put('localCheckedOut', { rid, scannedAt: new Date().toISOString() });
 }

@@ -182,21 +182,28 @@ describe('Agent 2 — Passes, Check-in & Certificates API', () => {
     const jsonRes = await as(organizer.id).get(`/api/events/${event.id}/attendance`);
     expect(jsonRes.status).toBe(200);
     expect(jsonRes.body.checkedInCount).toBe(1);
+    expect(jsonRes.body.checkedOutCount).toBe(0);
     expect(jsonRes.body.attendees[0].checkedIn).toBe(true);
+    expect(jsonRes.body.attendees[0].checkedOut).toBe(false);
 
     // CSV format
     const csvRes = await as(organizer.id).get(`/api/events/${event.id}/attendance?format=csv`);
     expect(csvRes.status).toBe(200);
     expect(csvRes.headers['content-type']).toContain('text/csv');
-    expect(csvRes.text).toContain('Name,USN,Email,Team,Checked In At,Scanned By');
+    expect(csvRes.text).toContain('Name,USN,Email,Team,Checked In At,Scanned By,Checked Out At,Checked Out By');
     expect(csvRes.text).toContain('Eva');
   });
 
-  it('issues OD certificates and verifies them publicly', async () => {
+  it('requires both check-in and check-out (after checkoutOpensAt) to claim or issue OD certificates', async () => {
     const inst = await makeInstitution();
     const organizer = await makeUser(inst.id, 'ORGANIZER');
     const student = await makeUser(inst.id, 'STUDENT', 'Frank');
+    const checkoutOpensAt = new Date(Date.now() + 60_000); // 1 min in the future
     const event = await makeEvent(inst.id, organizer.id, { status: 'ONGOING' });
+    await prisma.event.update({
+      where: { id: event.id },
+      data: { checkoutOpensAt },
+    });
 
     const reg = await prisma.registration.create({
       data: {
@@ -206,6 +213,24 @@ describe('Agent 2 — Passes, Check-in & Certificates API', () => {
       },
     });
 
+    // 1. Attempting CHECK_OUT before CHECK_IN fails with NOT_CHECKED_IN
+    const earlyCheckoutNoCheckin = await as(organizer.id)
+      .post('/api/checkin/sync')
+      .send({
+        scans: [
+          {
+            clientScanId: 'scan-out-no-in',
+            rid: reg.id,
+            scannedAt: new Date(checkoutOpensAt.getTime() + 5000).toISOString(),
+            deviceId: 'device-test',
+            scanType: 'CHECK_OUT',
+          },
+        ],
+      });
+    expect(earlyCheckoutNoCheckin.status).toBe(200);
+    expect(earlyCheckoutNoCheckin.body.results[0].status).toBe('NOT_CHECKED_IN');
+
+    // 2. Record entry CHECK_IN
     await prisma.checkIn.create({
       data: {
         registrationId: reg.id,
@@ -217,11 +242,54 @@ describe('Agent 2 — Passes, Check-in & Certificates API', () => {
       },
     });
 
-    // Issue certificates
-    const issueRes = await as(organizer.id).post(`/api/events/${event.id}/certificates/issue`);
-    expect(issueRes.status).toBe(200);
-    expect(issueRes.body.count).toBe(1);
-    const cert = issueRes.body.certificates[0];
+    // 3. Student cannot claim certificate with only CHECK_IN (no CHECK_OUT yet)
+    const prematureClaim = await as(student.id).post(`/api/events/${event.id}/certificates/claim`);
+    expect(prematureClaim.status).toBe(400);
+    expect(prematureClaim.body.error.code).toBe('CHECKOUT_REQUIRED');
+
+    // Organizer bulk issue also issues 0 certificates when student hasn't checked out
+    const prematureIssue = await as(organizer.id).post(`/api/events/${event.id}/certificates/issue`);
+    expect(prematureIssue.status).toBe(200);
+    expect(prematureIssue.body.count).toBe(0);
+
+    // 4. Attempting CHECK_OUT before checkoutOpensAt fails with CHECKOUT_TOO_EARLY
+    const tooEarlyCheckout = await as(organizer.id)
+      .post('/api/checkin/sync')
+      .send({
+        scans: [
+          {
+            clientScanId: 'scan-out-early',
+            rid: reg.id,
+            scannedAt: new Date(checkoutOpensAt.getTime() - 10_000).toISOString(),
+            deviceId: 'device-test',
+            scanType: 'CHECK_OUT',
+          },
+        ],
+      });
+    expect(tooEarlyCheckout.status).toBe(200);
+    expect(tooEarlyCheckout.body.results[0].status).toBe('CHECKOUT_TOO_EARLY');
+
+    // 5. Valid CHECK_OUT at/after checkoutOpensAt succeeds
+    const validCheckout = await as(organizer.id)
+      .post('/api/checkin/sync')
+      .send({
+        scans: [
+          {
+            clientScanId: 'scan-out-valid',
+            rid: reg.id,
+            scannedAt: new Date(checkoutOpensAt.getTime() + 5000).toISOString(),
+            deviceId: 'device-test',
+            scanType: 'CHECK_OUT',
+          },
+        ],
+      });
+    expect(validCheckout.status).toBe(200);
+    expect(validCheckout.body.results[0].status).toBe('ACCEPTED');
+
+    // 6. Student can now claim their certificate (or organizer can bulk issue)
+    const claimRes = await as(student.id).post(`/api/events/${event.id}/certificates/claim`);
+    expect(claimRes.status).toBe(201);
+    const cert = claimRes.body.certificate;
     expect(cert.serial).toMatch(/^CG-\d{4}-\d{6}$/);
     expect(cert.verifyCode).toHaveLength(10);
 
@@ -237,11 +305,13 @@ describe('Agent 2 — Passes, Check-in & Certificates API', () => {
     expect(notFoundRes.status).toBe(404);
     expect(notFoundRes.body.valid).toBe(false);
 
-    // Student lists their certificates
+    // Student lists their certificates & eligible registrations
     const myCertsRes = await as(student.id).get('/api/me/certificates');
     expect(myCertsRes.status).toBe(200);
     expect(myCertsRes.body.certificates).toHaveLength(1);
     expect(myCertsRes.body.certificates[0].id).toBe(cert.id);
+    expect(myCertsRes.body.eligibleRegistrations).toHaveLength(1);
+    expect(myCertsRes.body.eligibleRegistrations[0].certificateId).toBe(cert.id);
 
     // Download PDF
     const pdfRes = await as(student.id).get(`/api/certificates/${cert.id}/pdf`);

@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Link from 'next/link';
-import QRCode from 'qrcode';
 import { apiFetch, ApiError } from '@/lib/api';
 import { base64UrlDecodeToString, type PassTokenResponse, type PassTokenPayload } from '@campusgrid/shared';
 import { Badge, Button, ButtonLink, Card } from '@/components/ui';
@@ -110,19 +109,30 @@ export function DynamicPassClient({ registrationId }: DynamicPassClientProps) {
 
   // Draw QR code onto canvas
   useEffect(() => {
-    if (!token || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    if (!token || !canvas) return;
+    let cancelled = false;
 
-    QRCode.toCanvas(canvasRef.current, token, {
-      width: 260,
-      margin: 1.5,
-      color: {
-        dark: '#020617',
-        light: '#ffffff',
-      },
-      errorCorrectionLevel: 'M',
-    }).catch((err) => {
-      console.error('QR draw error', err);
-    });
+    import('qrcode')
+      .then((QRCode) => {
+        if (cancelled || !canvasRef.current) return;
+        return QRCode.toCanvas(canvasRef.current, token, {
+          width: 260,
+          margin: 1.5,
+          color: {
+            dark: '#020617',
+            light: '#ffffff',
+          },
+          errorCorrectionLevel: 'M',
+        });
+      })
+      .catch((err) => {
+        console.error('QR draw error', err);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [token, loading]);
 
   const handleCopyCode = () => {

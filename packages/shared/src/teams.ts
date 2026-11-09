@@ -11,11 +11,20 @@ export const inviteCodeSchema = z
 
 export const createTeamSchema = z.object({
   name: z.string().trim().min(1).max(60),
+  isOpen: z.boolean().optional().default(true),
 });
 export type CreateTeamInput = z.infer<typeof createTeamSchema>;
 
+export const updateTeamSchema = z.object({
+  isOpen: z.boolean(),
+});
+export type UpdateTeamInput = z.infer<typeof updateTeamSchema>;
+
 export const joinTeamSchema = z.object({
-  inviteCode: inviteCodeSchema,
+  inviteCode: inviteCodeSchema.optional(),
+  teamId: z.string().min(1).optional(),
+}).refine((d) => Boolean(d.inviteCode || d.teamId), {
+  message: 'Provide either an invite code or a teamId',
 });
 export type JoinTeamInput = z.infer<typeof joinTeamSchema>;
 
@@ -35,6 +44,7 @@ export interface TeamDTO {
   /** Only returned to team members. */
   inviteCode?: string;
   leaderId: string;
+  isOpen?: boolean;
   createdAt: string;
   members: TeamMemberDTO[];
 }

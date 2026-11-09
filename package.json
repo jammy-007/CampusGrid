@@ -12,7 +12,9 @@
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
     "db:migrate": "pnpm --filter api db:migrate",
-    "db:seed": "pnpm --filter api db:seed"
+    "db:seed": "pnpm --filter api db:seed",
+    "clean:cache": "node scripts/clean-cache.mjs",
+    "postinstall": "node scripts/clean-cache.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",

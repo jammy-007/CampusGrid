@@ -818,6 +818,12 @@ export function GradientASCII({
       raf = 0;
       if (disposed || !visible || document.hidden) return;
       const s = settingsRef.current;
+      const interactive = introClock < 1 || clicks.length > 0 || trail.length > 0 || pointer.active > 0.01;
+      const minInterval = interactive ? 1000 / 60 : 1000 / 30;
+      if (last && now - last < minInterval) {
+        raf = requestAnimationFrame(frame);
+        return;
+      }
       const dt = last ? clamp((now - last) / 1000, 0.001, 0.05) : 1 / 60;
       last = now;
       if (!reduce) {

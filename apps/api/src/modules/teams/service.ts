@@ -60,6 +60,7 @@ export function toTeamDTO(team: TeamWithMembers, showInviteCode: boolean): TeamD
     name: team.name,
     inviteCode: showInviteCode ? team.inviteCode : undefined,
     leaderId: team.leaderId,
+    isOpen: team.isOpen,
     createdAt: team.createdAt.toISOString(),
     members: team.members.map((m) => ({
       userId: m.userId,

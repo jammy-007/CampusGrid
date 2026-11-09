@@ -9,6 +9,7 @@ import {
   confirmRegistration,
   getVisibleEvent,
   lockEvent,
+  promoteNextWaitlisted,
   toEventDTO,
 } from '../events/service';
 import { leaveTeam } from '../teams/service';
@@ -22,14 +23,15 @@ router.post('/events/:eventId/register', requireAuth, requireRole('STUDENT'), as
   if (visible.isTeamEvent) {
     throw badRequest('This is a team event: create a team or join one with an invite code', 'TEAM_EVENT');
   }
+  const allowWaitlist = Boolean(req.body?.waitlist);
 
   const { registration, created } = await prisma.$transaction(async (tx) => {
     const event = await lockEvent(tx, visible.id);
     assertRegistrationOpen(event);
-    return confirmRegistration(tx, event, user.id, null);
+    return confirmRegistration(tx, event, user.id, null, allowWaitlist);
   });
 
-  if (created) {
+  if (created && registration.status === 'CONFIRMED') {
     bus.emit('registration.created', { registrationId: registration.id, eventId: registration.eventId, userId: user.id });
   }
   res.status(created ? 201 : 200).json({ registration: toRegistrationDTO(registration) });
@@ -45,18 +47,32 @@ router.delete('/events/:eventId/register', requireAuth, async (req, res) => {
     const registration = await tx.registration.findUnique({
       where: { eventId_userId: { eventId: event.id, userId: user.id } },
     });
-    if (!registration || registration.status !== 'CONFIRMED') throw notFound('You are not registered for this event');
+    if (!registration || (registration.status !== 'CONFIRMED' && registration.status !== 'WAITLISTED')) {
+      throw notFound('You are not registered for this event');
+    }
     assertRegistrationOpen(event);
 
+    const wasConfirmed = registration.status === 'CONFIRMED';
+
     if (registration.teamId) {
-      return leaveTeam(tx, registration.teamId, user.id, user.id);
+      const leaveRes = await leaveTeam(tx, registration.teamId, user.id, user.id);
+      const promoted = wasConfirmed ? await promoteNextWaitlisted(tx, event) : null;
+      return { ...leaveRes, promoted };
     }
     await tx.registration.update({ where: { id: registration.id }, data: { status: 'CANCELLED' } });
-    return { registrationId: registration.id, teamId: null, teamDeleted: false };
+    const promoted = wasConfirmed ? await promoteNextWaitlisted(tx, event) : null;
+    return { registrationId: registration.id, teamId: null, teamDeleted: false, promoted };
   });
 
   if (result.teamId && !result.teamDeleted) bus.emit('team.member_left', { teamId: result.teamId, userId: user.id });
   bus.emit('registration.cancelled', { registrationId: result.registrationId });
+  if (result.promoted) {
+    bus.emit('registration.created', {
+      registrationId: result.promoted.id,
+      eventId: result.promoted.eventId,
+      userId: result.promoted.userId,
+    });
+  }
   res.status(204).end();
 });
 
@@ -94,7 +110,7 @@ function toRegistrationDTO(r: {
   eventId: string;
   userId: string;
   teamId: string | null;
-  status: 'CONFIRMED' | 'CANCELLED';
+  status: 'CONFIRMED' | 'WAITLISTED' | 'CANCELLED';
   createdAt: Date;
 }): RegistrationDTO {
   return {

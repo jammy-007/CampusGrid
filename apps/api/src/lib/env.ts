@@ -1,3 +1,11 @@
+import path from 'node:path';
+
+try {
+  process.loadEnvFile?.(path.resolve(import.meta.dirname, '../../../../.env'));
+} catch {
+  // Ignore if root .env is absent
+}
+
 function required(name: string, fallback?: string): string {
   const value = process.env[name] ?? fallback;
   if (value === undefined || value === '') {

@@ -1,8 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
-import gsap from 'gsap';
-import { useGSAP } from '@gsap/react';
+import { useEffect, useRef } from 'react';
 import { cn } from '@/lib/cn';
 
 export interface BlurTextProps {
@@ -23,37 +21,37 @@ export function BlurText({
   const containerRef = useRef<HTMLSpanElement>(null);
   const parts = animateBy === 'words' ? text.split(' ') : text.split('');
 
-  useGSAP(
-    () => {
-      const el = containerRef.current;
-      if (!el) return;
-      const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-      const items = el.querySelectorAll<HTMLElement>('[data-blur-item]');
-      if (reduce) {
-        gsap.set(items, { opacity: 1, filter: 'blur(0px)', y: 0 });
-        return;
-      }
-      gsap.fromTo(
-        items,
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+    const items = Array.from(el.querySelectorAll<HTMLElement>('[data-blur-item]'));
+    if (reduce) return;
+
+    const anims = items.map((item, idx) => {
+      if (typeof item.animate !== 'function') return null;
+      const anim = item.animate(
+        [
+          { opacity: 0, filter: 'blur(10px)', transform: 'translateY(16px)' },
+          { opacity: 1, filter: 'blur(0px)', transform: 'translateY(0px)' },
+        ],
         {
-          opacity: 0,
-          filter: 'blur(10px)',
-          y: 16,
-        },
-        {
-          opacity: 1,
-          filter: 'blur(0px)',
-          y: 0,
-          duration: 0.7,
-          delay,
-          stagger,
-          ease: 'power3.out',
-          clearProps: 'filter',
+          duration: 700,
+          delay: (delay + idx * stagger) * 1000,
+          easing: 'cubic-bezier(0.215, 0.61, 0.355, 1)',
+          fill: 'both',
         },
       );
-    },
-    { scope: containerRef, dependencies: [text, delay, stagger, animateBy] },
-  );
+      anim.onfinish = () => {
+        anim.cancel();
+      };
+      return anim;
+    });
+
+    return () => {
+      anims.forEach((a) => a?.cancel());
+    };
+  }, [text, delay, stagger, animateBy]);
 
   return (
     <span ref={containerRef} className={cn('inline-flex flex-wrap justify-center gap-x-[0.28em]', className)}>

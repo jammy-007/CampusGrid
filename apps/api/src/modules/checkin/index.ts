@@ -47,7 +47,7 @@ router.get('/events/:eventId/checkin/bundle', requireAuth, requireEventOrganizer
 
   const event = await prisma.event.findUnique({
     where: { id: eventId },
-    select: { id: true, title: true, institutionId: true },
+    select: { id: true, title: true, institutionId: true, checkoutOpensAt: true },
   });
 
   if (!event || event.institutionId !== req.user!.institutionId) {
@@ -75,17 +75,22 @@ router.get('/events/:eventId/checkin/bundle', requireAuth, requireEventOrganizer
 
   const checkIns = await prisma.checkIn.findMany({
     where: { eventId },
-    select: { registrationId: true },
+    select: { registrationId: true, checkedOutAt: true },
   });
 
   const alreadyCheckedInSet = new Set<string>();
+  const alreadyCheckedOutSet = new Set<string>();
   for (const c of checkIns) {
     alreadyCheckedInSet.add(c.registrationId);
+    if (c.checkedOutAt) {
+      alreadyCheckedOutSet.add(c.registrationId);
+    }
   }
 
   const bundle: CheckinBundleDTO = {
     publicKey: getPassSigningPublicKeyHex(),
     eventId: event.id,
+    checkoutOpensAt: event.checkoutOpensAt ? event.checkoutOpensAt.toISOString() : null,
     registrations: registrations.map((r) => ({
       rid: r.id,
       uid: r.userId,
@@ -93,9 +98,39 @@ router.get('/events/:eventId/checkin/bundle', requireAuth, requireEventOrganizer
       usn: r.user.usn,
     })),
     alreadyCheckedIn: Array.from(alreadyCheckedInSet),
+    alreadyCheckedOut: Array.from(alreadyCheckedOutSet),
   };
 
   res.json(bundle);
+});
+
+/**
+ * POST /api/events/:eventId/checkin/open-checkout
+ * Immediately opens the check-out window for the event (sets checkoutOpensAt = now).
+ */
+router.post('/events/:eventId/checkin/open-checkout', requireAuth, requireEventOrganizer('eventId'), async (req, res) => {
+  const eventId = req.params.eventId as string;
+
+  const event = await prisma.event.findUnique({
+    where: { id: eventId },
+    select: { id: true, institutionId: true },
+  });
+
+  if (!event || event.institutionId !== req.user!.institutionId) {
+    throw notFound('Event not found');
+  }
+
+  const now = new Date();
+  const updated = await prisma.event.update({
+    where: { id: eventId },
+    data: { checkoutOpensAt: now },
+    select: { id: true, checkoutOpensAt: true },
+  });
+
+  res.json({
+    eventId: updated.id,
+    checkoutOpensAt: updated.checkoutOpensAt ? updated.checkoutOpensAt.toISOString() : now.toISOString(),
+  });
 });
 
 /**
@@ -114,10 +149,12 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
   const affectedEventIds = new Set<string>();
 
   for (const scan of input.scans) {
+    const isCheckout = scan.scanType === 'CHECK_OUT';
+
     // 1. Idempotency check: same clientScanId already processed?
-    const existingByClientScanId = await prisma.checkIn.findUnique({
-      where: { clientScanId: scan.clientScanId },
-    });
+    const existingByClientScanId = isCheckout
+      ? await prisma.checkIn.findUnique({ where: { checkoutClientScanId: scan.clientScanId } })
+      : await prisma.checkIn.findUnique({ where: { clientScanId: scan.clientScanId } });
 
     if (existingByClientScanId) {
       results.push({
@@ -134,7 +171,7 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
       where: { id: scan.rid },
       include: {
         event: {
-          select: { id: true, organizerId: true, institutionId: true },
+          select: { id: true, organizerId: true, institutionId: true, checkoutOpensAt: true },
         },
       },
     });
@@ -176,6 +213,68 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
     });
 
     const scanDate = new Date(scan.scannedAt);
+
+    if (isCheckout) {
+      if (!existingCheckIn) {
+        results.push({
+          clientScanId: scan.clientScanId,
+          rid: scan.rid,
+          status: 'NOT_CHECKED_IN',
+          message: 'Student must check in before checking out',
+        });
+        continue;
+      }
+
+      if (registration.event.checkoutOpensAt && scanDate < registration.event.checkoutOpensAt) {
+        results.push({
+          clientScanId: scan.clientScanId,
+          rid: scan.rid,
+          status: 'CHECKOUT_TOO_EARLY',
+          message: `Check-out opens at ${registration.event.checkoutOpensAt.toISOString()}`,
+        });
+        continue;
+      }
+
+      if (existingCheckIn.checkedOutAt) {
+        if (scanDate < existingCheckIn.checkedOutAt) {
+          await prisma.checkIn.update({
+            where: { id: existingCheckIn.id },
+            data: {
+              checkedOutAt: scanDate,
+              checkedOutById: user.id,
+              checkoutDeviceId: scan.deviceId,
+            },
+          });
+        }
+
+        results.push({
+          clientScanId: scan.clientScanId,
+          rid: scan.rid,
+          status: 'ALREADY_CHECKED_OUT',
+          message: 'Registration already checked out',
+        });
+        continue;
+      }
+
+      await prisma.checkIn.update({
+        where: { id: existingCheckIn.id },
+        data: {
+          checkedOutAt: scanDate,
+          checkedOutById: user.id,
+          checkoutDeviceId: scan.deviceId,
+          checkoutClientScanId: scan.clientScanId,
+        },
+      });
+
+      affectedEventIds.add(registration.eventId);
+
+      results.push({
+        clientScanId: scan.clientScanId,
+        rid: scan.rid,
+        status: 'ACCEPTED',
+      });
+      continue;
+    }
 
     if (existingCheckIn) {
       // Keep earliest check-in time
@@ -249,7 +348,7 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
   // 5. Emit live updates for affected events
   for (const eventId of affectedEventIds) {
     try {
-      const [registered, checkedIns] = await Promise.all([
+      const [registered, checkedIns, checkedOuts] = await Promise.all([
         prisma.registration.count({
           where: { eventId, status: 'CONFIRMED' },
         }),
@@ -257,13 +356,19 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
           by: ['registrationId'],
           where: { eventId },
         }),
+        prisma.checkIn.groupBy({
+          by: ['registrationId'],
+          where: { eventId, checkedOutAt: { not: null } },
+        }),
       ]);
 
       const checkedIn = checkedIns.length;
+      const checkedOut = checkedOuts.length;
       const io = getIO();
       io.of('/live').to(`event:${eventId}`).emit('checkin:count', {
         eventId,
         checkedIn,
+        checkedOut,
         registered,
       });
     } catch {
@@ -295,7 +400,7 @@ router.get('/events/:eventId/attendance', requireAuth, requireEventOrganizer('ev
 
   const event = await prisma.event.findUnique({
     where: { id: eventId },
-    select: { id: true, title: true, institutionId: true },
+    select: { id: true, title: true, institutionId: true, checkoutOpensAt: true },
   });
 
   if (!event || event.institutionId !== req.user!.institutionId) {
@@ -320,6 +425,10 @@ router.get('/events/:eventId/attendance', requireAuth, requireEventOrganizer('ev
           scannedBy: {
             select: { name: true },
           },
+          checkedOutAt: true,
+          checkedOutBy: {
+            select: { name: true },
+          },
         },
         orderBy: { scannedAt: 'asc' },
         take: 1,
@@ -332,7 +441,7 @@ router.get('/events/:eventId/attendance', requireAuth, requireEventOrganizer('ev
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="attendance-${eventId}.csv"`);
 
-    const header = 'Name,USN,Email,Team,Checked In At,Scanned By\r\n';
+    const header = 'Name,USN,Email,Team,Checked In At,Scanned By,Checked Out At,Checked Out By\r\n';
     const rows = registrations.map((r) => {
       const checkIn = r.checkIns[0];
       const name = escapeCsv(r.user.name);
@@ -341,7 +450,9 @@ router.get('/events/:eventId/attendance', requireAuth, requireEventOrganizer('ev
       const team = escapeCsv(r.team?.name ?? '');
       const checkedInAt = escapeCsv(checkIn ? checkIn.scannedAt.toISOString() : '');
       const scannedBy = escapeCsv(checkIn ? checkIn.scannedBy.name : '');
-      return `${name},${usn},${email},${team},${checkedInAt},${scannedBy}`;
+      const checkedOutAt = escapeCsv(checkIn?.checkedOutAt ? checkIn.checkedOutAt.toISOString() : '');
+      const checkedOutBy = escapeCsv(checkIn?.checkedOutBy ? checkIn.checkedOutBy.name : '');
+      return `${name},${usn},${email},${team},${checkedInAt},${scannedBy},${checkedOutAt},${checkedOutBy}`;
     });
 
     res.send(header + rows.join('\r\n'));
@@ -360,16 +471,22 @@ router.get('/events/:eventId/attendance', requireAuth, requireEventOrganizer('ev
       checkedIn: !!checkIn,
       scannedAt: checkIn ? checkIn.scannedAt.toISOString() : null,
       scannedByName: checkIn ? checkIn.scannedBy.name : null,
+      checkedOut: !!checkIn?.checkedOutAt,
+      checkedOutAt: checkIn?.checkedOutAt ? checkIn.checkedOutAt.toISOString() : null,
+      checkedOutByName: checkIn?.checkedOutBy?.name ?? null,
     };
   });
 
   const checkedInCount = attendees.filter((a) => a.checkedIn).length;
+  const checkedOutCount = attendees.filter((a) => a.checkedOut).length;
 
   const response: AttendanceDTO = {
     eventId: event.id,
     title: event.title,
+    checkoutOpensAt: event.checkoutOpensAt ? event.checkoutOpensAt.toISOString() : null,
     registeredCount: attendees.length,
     checkedInCount,
+    checkedOutCount,
     attendees,
   };
 

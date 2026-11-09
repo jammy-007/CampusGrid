@@ -6,6 +6,7 @@ import {
   type CheckinAttendeeDTO,
   type CheckinBundleDTO,
   type PassTokenPayload,
+  type ScanType,
 } from '@campusgrid/shared';
 
 function parsePublicKeyTo32Bytes(keyStr: string): Uint8Array {
@@ -32,7 +33,10 @@ export type ScanVerificationReason =
   | 'WRONG_EVENT'
   | 'TOKEN_EXPIRED'
   | 'NOT_IN_BUNDLE'
-  | 'ALREADY_CHECKED_IN';
+  | 'ALREADY_CHECKED_IN'
+  | 'NOT_CHECKED_IN'
+  | 'ALREADY_CHECKED_OUT'
+  | 'CHECKOUT_TOO_EARLY';
 
 export interface ScanVerificationResult {
   valid: boolean;
@@ -49,12 +53,14 @@ export interface ScanVerificationResult {
  * 3. Checks eventId matches bundle.eventId
  * 4. Checks expiry (with 30s clock skew tolerance)
  * 5. Checks registration exists in bundle.registrations
- * 6. Checks registration is not already checked in
+ * 6. Checks registration check-in / check-out state & checkoutOpensAt window
  */
 export async function verifyScanToken(
   token: string,
   bundle: CheckinBundleDTO,
   checkedInSet: Set<string>,
+  checkedOutSet: Set<string> = new Set(),
+  scanType: ScanType = 'CHECK_IN',
 ): Promise<ScanVerificationResult> {
   const trimmed = token.trim();
   const parts = trimmed.split('.');
@@ -171,7 +177,49 @@ export async function verifyScanToken(
     };
   }
 
-  // 6. Already scanned check
+  // 6. Mode-specific check-in / check-out validation
+  if (scanType === 'CHECK_OUT') {
+    if (bundle.checkoutOpensAt) {
+      const opensAt = new Date(bundle.checkoutOpensAt);
+      if (new Date() < opensAt) {
+        return {
+          valid: false,
+          reason: 'CHECKOUT_TOO_EARLY',
+          message: `Check-out opens at ${opensAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+          attendee,
+          payload,
+        };
+      }
+    }
+
+    if (!checkedInSet.has(payload.rid)) {
+      return {
+        valid: false,
+        reason: 'NOT_CHECKED_IN',
+        message: 'Student has not checked in yet (Entry scan required first)',
+        attendee,
+        payload,
+      };
+    }
+
+    if (checkedOutSet.has(payload.rid)) {
+      return {
+        valid: false,
+        reason: 'ALREADY_CHECKED_OUT',
+        message: 'Already checked out',
+        attendee,
+        payload,
+      };
+    }
+
+    return {
+      valid: true,
+      attendee,
+      payload,
+      message: 'Check-out confirmed',
+    };
+  }
+
   if (checkedInSet.has(payload.rid)) {
     return {
       valid: false,

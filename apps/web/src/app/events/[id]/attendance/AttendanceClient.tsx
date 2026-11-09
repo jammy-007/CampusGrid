@@ -29,7 +29,8 @@ interface AttendanceClientProps {
 export function AttendanceClient({ eventId, initialAttendance, eventStatus }: AttendanceClientProps) {
   const [attendance, setAttendance] = useState<AttendanceDTO>(initialAttendance);
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | 'CHECKED_IN' | 'PENDING'>('ALL');
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'COMPLETED' | 'CHECKED_IN' | 'PENDING'>('ALL');
+  const [openingCheckout, setOpeningCheckout] = useState<boolean>(false);
 
   // Certificate state
   const [certificates, setCertificates] = useState<CertificateDTO[]>([]);
@@ -43,12 +44,18 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
 
     socket.emit('live:subscribe', { eventId });
 
-    const handleCountUpdate = (data: { eventId: string; checkedIn: number; registered: number }) => {
+    const handleCountUpdate = (data: {
+      eventId: string;
+      checkedIn: number;
+      checkedOut?: number;
+      registered: number;
+    }) => {
       if (data.eventId === eventId) {
         setAttendance((prev) => ({
           ...prev,
           registeredCount: data.registered,
           checkedInCount: data.checkedIn,
+          checkedOutCount: data.checkedOut ?? prev.checkedOutCount,
         }));
         // Re-fetch full attendance list to show newly checked-in attendee rows
         apiFetch<AttendanceDTO>(`/api/events/${eventId}/attendance`)
@@ -63,6 +70,21 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
       socket.off('checkin:count', handleCountUpdate);
     };
   }, [eventId]);
+
+  const handleOpenCheckoutNow = async () => {
+    setOpeningCheckout(true);
+    try {
+      const res = await apiFetch<{ checkoutOpensAt: string }>(
+        `/api/events/${eventId}/checkin/open-checkout`,
+        { method: 'POST' },
+      );
+      setAttendance((prev) => ({ ...prev, checkoutOpensAt: res.checkoutOpensAt }));
+    } catch {
+      // Ignore
+    } finally {
+      setOpeningCheckout(false);
+    }
+  };
 
   // Load existing certificates
   const loadCertificates = useCallback(async () => {
@@ -107,9 +129,13 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
     }
   };
 
+  const checkedOutCount =
+    attendance.checkedOutCount ?? attendance.attendees.filter((a) => a.checkedOut).length;
+
   // Filter attendees
   const filteredAttendees = useMemo(() => {
     return attendance.attendees.filter((a: AttendanceAttendeeDTO) => {
+      if (statusFilter === 'COMPLETED' && !a.checkedOut) return false;
       if (statusFilter === 'CHECKED_IN' && !a.checkedIn) return false;
       if (statusFilter === 'PENDING' && a.checkedIn) return false;
 
@@ -125,7 +151,7 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
   }, [attendance.attendees, search, statusFilter]);
 
   const percentage = attendance.registeredCount > 0
-    ? Math.round((attendance.checkedInCount / attendance.registeredCount) * 100)
+    ? Math.round((checkedOutCount / attendance.registeredCount) * 100)
     : 0;
 
   return (
@@ -172,22 +198,50 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
         </Card>
         <Card className="p-4">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-slate-400">Checked In</span>
+            <span className="text-xs font-medium text-slate-400">Checked In (Entry)</span>
+            <span className="inline-flex h-2 w-2 rounded-full bg-amber-400 animate-ping" />
+          </div>
+          <p className="mt-1 text-2xl font-bold text-amber-400">{attendance.checkedInCount}</p>
+        </Card>
+        <Card className="p-4">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-400">Checked Out (OD Eligible)</span>
             <span className="inline-flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
           </div>
-          <p className="mt-1 text-2xl font-bold text-emerald-400">{attendance.checkedInCount}</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-400">{checkedOutCount}</p>
         </Card>
         <Card className="p-4">
-          <span className="text-xs font-medium text-slate-400">Pending</span>
-          <p className="mt-1 text-2xl font-bold text-amber-400">
-            {Math.max(0, attendance.registeredCount - attendance.checkedInCount)}
-          </p>
-        </Card>
-        <Card className="p-4">
-          <span className="text-xs font-medium text-slate-400">Attendance Rate</span>
+          <span className="text-xs font-medium text-slate-400">Completion Rate</span>
           <p className="mt-1 text-2xl font-bold text-sky-400">{percentage}%</p>
         </Card>
       </div>
+
+      {/* Check-Out Window Banner */}
+      <Card className="flex flex-wrap items-center justify-between gap-3 p-4 text-xs">
+        <div className="text-slate-300">
+          <span className="font-semibold text-white">Check-Out Requirement: </span>
+          Students must scan their QR pass at both entry (Check-In) and exit (Check-Out) to unlock OD certificates.
+          {attendance.checkoutOpensAt && (
+            <span className="ml-2 text-slate-400">
+              (Check-out opens:{' '}
+              <span className="font-mono text-sky-300">
+                {new Date(attendance.checkoutOpensAt).toLocaleString()}
+              </span>
+              )
+            </span>
+          )}
+        </div>
+        {attendance.checkoutOpensAt && new Date() < new Date(attendance.checkoutOpensAt) && (
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={openingCheckout}
+            onClick={handleOpenCheckoutNow}
+          >
+            Open Check-Out Now
+          </Button>
+        )}
+      </Card>
 
       {/* Progress Bar */}
       <div className="h-2 w-full overflow-hidden rounded-full bg-slate-900 ring-1 ring-white/10">
@@ -218,8 +272,8 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
             />
           </div>
 
-          <div className="flex gap-1.5">
-            {(['ALL', 'CHECKED_IN', 'PENDING'] as const).map((mode) => (
+          <div className="flex flex-wrap gap-1.5">
+            {(['ALL', 'COMPLETED', 'CHECKED_IN', 'PENDING'] as const).map((mode) => (
               <button
                 key={mode}
                 onClick={() => setStatusFilter(mode)}
@@ -229,7 +283,13 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
                     : 'bg-slate-800/80 text-slate-300 hover:bg-slate-700 hover:text-white'
                 }`}
               >
-                {mode === 'ALL' ? 'All' : mode === 'CHECKED_IN' ? 'Checked In' : 'Pending'}
+                {mode === 'ALL'
+                  ? 'All'
+                  : mode === 'COMPLETED'
+                    ? 'Checked Out (Eligible)'
+                    : mode === 'CHECKED_IN'
+                      ? 'Checked In'
+                      : 'Pending'}
               </button>
             ))}
           </div>
@@ -246,7 +306,7 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
             <TH>Email</TH>
             <TH>Team</TH>
             <TH>Checked In At</TH>
-            <TH>Scanned By</TH>
+            <TH>Checked Out At</TH>
           </TR>
         </THead>
         <TBody>
@@ -260,8 +320,10 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
             filteredAttendees.map((a: AttendanceAttendeeDTO) => (
               <TR key={a.registrationId}>
                 <TD>
-                  {a.checkedIn ? (
-                    <Badge tone="green">Checked In</Badge>
+                  {a.checkedOut ? (
+                    <Badge tone="green">Checked Out ✓</Badge>
+                  ) : a.checkedIn ? (
+                    <Badge tone="amber">Checked In Only</Badge>
                   ) : (
                     <Badge tone="neutral">Pending</Badge>
                   )}
@@ -273,7 +335,9 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
                 <TD className="font-mono text-slate-400">
                   {a.scannedAt ? new Date(a.scannedAt).toLocaleTimeString() : '—'}
                 </TD>
-                <TD className="text-slate-400">{a.scannedByName ?? '—'}</TD>
+                <TD className="font-mono text-emerald-400">
+                  {a.checkedOutAt ? new Date(a.checkedOutAt).toLocaleTimeString() : '—'}
+                </TD>
               </TR>
             ))
           )}
@@ -286,7 +350,7 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
           <div>
             <CardTitle>Duty Leave (OD) Certificates</CardTitle>
             <p className="mt-1 text-xs text-slate-400">
-              Generate officially verifiable On Duty certificates for checked-in attendees.
+              Generate officially verifiable On Duty certificates for attendees who completed both Check-In and Check-Out.
             </p>
           </div>
 
@@ -297,7 +361,7 @@ export function AttendanceClient({ eventId, initialAttendance, eventStatus }: At
             variant="primary"
             size="sm"
           >
-            Issue OD Certificates ({attendance.checkedInCount} checked-in)
+            Issue OD Certificates ({checkedOutCount} eligible)
           </Button>
         </div>
 
