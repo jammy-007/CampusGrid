@@ -43,7 +43,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
           />
           <div
             aria-hidden="true"
-            className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.18)_0%,rgba(2,6,23,0.32)_55%,rgba(2,6,23,0.72)_72%,rgba(2,6,23,0.96)_100%)]"
+            className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(2,6,23,0.48)_0%,rgba(2,6,23,0.58)_55%,rgba(2,6,23,0.84)_75%,rgba(2,6,23,0.97)_100%)]"
           />
         </div>
         <SessionProvider initialUser={user}>

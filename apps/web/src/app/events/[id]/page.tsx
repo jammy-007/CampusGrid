@@ -11,6 +11,7 @@ import { EventActions } from './EventActions';
 import { PublishButton } from './PublishButton';
 import { AnnouncementsPanel } from './AnnouncementsPanel';
 import { CalendarActions } from './CalendarActions';
+import { FeedbackPanel } from './FeedbackPanel';
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -34,25 +35,29 @@ export default async function EventPage({ params }: Props) {
 
   return (
     <div className="space-y-7">
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <Badge>{TYPE_LABEL[event.type]}</Badge>
-          <StatusBadge status={event.status} />
-          {event.isTeamEvent && <Badge>Teams of {event.minTeamSize}–{event.maxTeamSize}</Badge>}
-        </div>
-        <h1 className="text-3xl font-bold text-white">{event.title}</h1>
-        {event.organizerName && <p className="text-sm text-slate-300">Organized by {event.organizerName}</p>}
-      </div>
+      <Card className="p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="space-y-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Badge>{TYPE_LABEL[event.type]}</Badge>
+              <StatusBadge status={event.status} />
+              {event.isTeamEvent && <Badge>Teams of {event.minTeamSize}–{event.maxTeamSize}</Badge>}
+            </div>
+            <h1 className="text-3xl font-bold text-white">{event.title}</h1>
+            {event.organizerName && <p className="text-sm text-slate-300">Organized by {event.organizerName}</p>}
+          </div>
 
-      {isManager && (
-        <div className="flex flex-wrap gap-2.5">
-          <ButtonLink href={`/events/${event.id}/manage`}>Manage</ButtonLink>
-          <ButtonLink href={`/events/${event.id}/edit`} variant="secondary">
-            Edit
-          </ButtonLink>
-          {event.status === 'DRAFT' && <PublishButton eventId={event.id} />}
+          {isManager && (
+            <div className="flex flex-wrap gap-2.5">
+              <ButtonLink href={`/events/${event.id}/manage`}>Manage</ButtonLink>
+              <ButtonLink href={`/events/${event.id}/edit`} variant="secondary">
+                Edit
+              </ButtonLink>
+              {event.status === 'DRAFT' && <PublishButton eventId={event.id} />}
+            </div>
+          )}
         </div>
-      )}
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">
@@ -65,32 +70,37 @@ export default async function EventPage({ params }: Props) {
           </Card>
           <AnnouncementsPanel eventId={event.id} canPost={isManager} />
           {event.type === 'HACKATHON' && <HackathonPanel eventId={event.id} />}
+          <FeedbackPanel eventId={event.id} canReview={user?.role === 'STUDENT' && Boolean(reg)} />
         </div>
         <div className="space-y-6">
-          <Card className="space-y-3 p-6 text-sm">
-            <Row label="Starts" value={formatDateTime(event.startsAt)} />
-            <Row label="Ends" value={formatDateTime(event.endsAt)} />
-            {event.checkoutOpensAt && (
-              <Row label="QR Check-out opens" value={formatDateTime(event.checkoutOpensAt)} />
-            )}
-            <Row label="Venue" value={event.venue} />
-            <Row label="Registration closes" value={formatDateTime(event.registrationDeadline)} />
-            <Row
-              label="Registered"
-              value={`${event.registeredCount ?? 0}${event.capacity !== null ? ` / ${event.capacity}` : ''}`}
-            />
-            <CalendarActions event={event} />
+          <Card className="p-6">
+            <div className="space-y-3 text-sm">
+              <Row label="Starts" value={formatDateTime(event.startsAt)} />
+              <Row label="Ends" value={formatDateTime(event.endsAt)} />
+              {event.checkoutOpensAt && (
+                <Row label="QR Check-out opens" value={formatDateTime(event.checkoutOpensAt)} />
+              )}
+              <Row label="Venue" value={event.venue} />
+              <Row label="Registration closes" value={formatDateTime(event.registrationDeadline)} />
+              <Row
+                label="Registered"
+                value={`${event.registeredCount ?? 0}${event.capacity !== null ? ` / ${event.capacity}` : ''}`}
+              />
+              <CalendarActions event={event} />
+            </div>
           </Card>
           {user?.role === 'STUDENT' && (
-            <Card className="space-y-4 p-6">
-              {reg && <Badge tone="green">You are registered</Badge>}
-              {waitlisted && (
-                <Badge tone="amber">
-                  On Waitlist{waitlisted.waitlistPosition ? ` (#${waitlisted.waitlistPosition})` : ''}
-                </Badge>
-              )}
-              <EventActions event={event} open={open} />
-              {reg && <EventPassButton registrationId={reg.id} />}
+            <Card className="p-6">
+              <div className="space-y-4">
+                {reg && <Badge tone="green">You are registered</Badge>}
+                {waitlisted && (
+                  <Badge tone="amber">
+                    On Waitlist{waitlisted.waitlistPosition ? ` (#${waitlisted.waitlistPosition})` : ''}
+                  </Badge>
+                )}
+                <EventActions event={event} open={open} />
+                {reg && <EventPassButton registrationId={reg.id} />}
+              </div>
             </Card>
           )}
           {user?.role === 'JUDGE' && event.type === 'HACKATHON' && (

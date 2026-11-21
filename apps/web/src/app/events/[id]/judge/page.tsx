@@ -154,22 +154,24 @@ export default function JudgePage({ params }: { params: Promise<{ id: string }> 
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Link href={`/events/${eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
-            ← Back to {event?.title ?? 'Event'}
-          </Link>
-          <h1 className="mt-1 text-2xl font-bold text-white">Faculty Evaluation Matrix</h1>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Link href={`/events/${eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
+              ← Back to {event?.title ?? 'Event'}
+            </Link>
+            <h1 className="mt-1 text-2xl font-bold text-white">Faculty Evaluation Matrix</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-sm font-semibold text-sky-300">
+              Progress: {scoredCount} / {queue.length} scored
+            </span>
+            <ButtonLink href={`/events/${eventId}/leaderboard`} variant="secondary">
+              Leaderboard
+            </ButtonLink>
+          </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="font-mono text-sm font-semibold text-sky-300">
-            Progress: {scoredCount} / {queue.length} scored
-          </span>
-          <ButtonLink href={`/events/${eventId}/leaderboard`} variant="secondary">
-            Leaderboard
-          </ButtonLink>
-        </div>
-      </div>
+      </Card>
 
       {queue.length === 0 ? (
         <Card className="p-8 text-center text-slate-400">

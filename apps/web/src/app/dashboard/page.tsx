@@ -21,17 +21,21 @@ export default async function DashboardPage() {
     );
     return (
       <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-bold tracking-tight text-white">
-            <BlurText text={`Hi, ${user.name}`} />
-          </h1>
-          <Magnet>
-            <ButtonLink href="/events/new">Create event</ButtonLink>
-          </Magnet>
-        </div>
-        <h2 className="text-lg font-semibold text-slate-200">
-          {user.role === 'ADMIN' ? 'All campus events' : 'Your events'}
-        </h2>
+        <Card className="p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-white">
+                <BlurText text={`Hi, ${user.name}`} />
+              </h1>
+              <p className="mt-1 text-sm font-medium text-slate-300">
+                {user.role === 'ADMIN' ? 'All campus events' : 'Your events'}
+              </p>
+            </div>
+            <Magnet>
+              <ButtonLink href="/events/new">Create event</ButtonLink>
+            </Magnet>
+          </div>
+        </Card>
         {events.length === 0 ? (
           <Card className="text-sm text-slate-300">No events yet. Create one to get started.</Card>
         ) : (
@@ -65,10 +69,12 @@ export default async function DashboardPage() {
     const { events } = await apiServer<{ events: EventDTO[] }>('/api/events?type=HACKATHON', '/dashboard');
     return (
       <div className="space-y-6">
-        <h1 className="text-3xl font-bold tracking-tight text-white">
-          <BlurText text={`Hi, ${user.name}`} />
-        </h1>
-        <h2 className="text-lg font-semibold text-slate-200">Hackathons</h2>
+        <Card className="p-5">
+          <h1 className="text-3xl font-bold tracking-tight text-white">
+            <BlurText text={`Hi, ${user.name}`} />
+          </h1>
+          <p className="mt-1 text-sm font-medium text-slate-300">Hackathons</p>
+        </Card>
         {events.length === 0 ? (
           <Card className="text-sm text-slate-300">No hackathons to judge right now.</Card>
         ) : (
@@ -99,10 +105,12 @@ export default async function DashboardPage() {
   const next = upcoming[0];
 
   return (
-    <div className="space-y-9">
-      <h1 className="text-3xl font-bold tracking-tight text-white">
-        <BlurText text={`Hi, ${user.name}`} />
-      </h1>
+    <div className="space-y-8">
+      <Card className="p-5">
+        <h1 className="text-3xl font-bold tracking-tight text-white">
+          <BlurText text={`Hi, ${user.name}`} />
+        </h1>
+      </Card>
       {next && (
         <Card spotlightColor="rgba(56, 189, 248, 0.25)" className="space-y-4 p-6 border-sky-400/30">
           <div className="flex flex-wrap items-center justify-between gap-2">

@@ -34,6 +34,29 @@ export interface EventAnnouncementDTO {
   createdAt: string;
 }
 
+export const upsertFeedbackSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().max(1000).default(''),
+});
+export type UpsertFeedbackInput = z.infer<typeof upsertFeedbackSchema>;
+
+export interface EventFeedbackDTO {
+  id: string;
+  eventId: string;
+  userId: string;
+  userName: string;
+  rating: number;
+  comment: string;
+  createdAt: string;
+}
+
+export interface EventFeedbackSummaryDTO {
+  averageRating: number;
+  totalCount: number;
+  reviews: EventFeedbackDTO[];
+  myFeedback: EventFeedbackDTO | null;
+}
+
 // No defaults here: PATCH must not reset omitted fields.
 const eventFields = z.object({
   title: z.string().trim().min(1).max(200),
@@ -114,6 +137,8 @@ export const eventListQuerySchema = z.object({
   type: eventTypeSchema.optional(),
   when: z.enum(['upcoming', 'past']).optional(),
   mine: z.enum(['true', 'false']).optional(),
+  q: z.string().trim().max(100).optional(),
+  mode: z.enum(['solo', 'team']).optional(),
 });
 export type EventListQuery = z.infer<typeof eventListQuerySchema>;
 

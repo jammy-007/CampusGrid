@@ -57,6 +57,7 @@ model User {
   ledTeams      Team[]         @relation("TeamLeader")
   teamMembers   TeamMember[]
   authoredAnnouncements EventAnnouncement[] @relation("AnnouncementAuthor")
+  feedbacks     EventFeedback[] @relation("UserFeedback")
 
   // passes.prisma (Agent 2)
   scannedCheckIns    CheckIn[]     @relation("CheckInScanner")
@@ -95,6 +96,7 @@ model Event {
   registrations Registration[]
   teams         Team[]
   announcements EventAnnouncement[]
+  feedbacks     EventFeedback[]
 
   // passes.prisma (Agent 2)
   checkIns CheckIn[]
@@ -174,5 +176,20 @@ model EventAnnouncement {
   event  Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   author User  @relation("AnnouncementAuthor", fields: [authorId], references: [id])
 
+  @@index([eventId, createdAt])
+}
+
+model EventFeedback {
+  id        String   @id @default(cuid())
+  eventId   String
+  userId    String
+  rating    Int
+  comment   String   @default("")
+  createdAt DateTime @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation("UserFeedback", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
   @@index([eventId, createdAt])
 }

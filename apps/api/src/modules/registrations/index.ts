@@ -77,14 +77,38 @@ router.delete('/events/:eventId/register', requireAuth, async (req, res) => {
 });
 
 router.get('/events/:eventId/registrations', requireAuth, requireEventOrganizer(), async (req, res) => {
+  const eventId = req.params.eventId as string;
   const registrations = await prisma.registration.findMany({
-    where: { eventId: req.params.eventId as string },
+    where: { eventId },
     include: {
       user: { select: { id: true, name: true, email: true, usn: true } },
       team: { select: { id: true, name: true } },
     },
     orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
   });
+
+  if (req.query.format === 'csv') {
+    const escapeCsv = (val: string | null | undefined) => {
+      const str = val ?? '';
+      return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const header = 'Name,Email,USN,Status,Team,RegisteredAt';
+    const lines = registrations.map((r) =>
+      [
+        escapeCsv(r.user?.name),
+        escapeCsv(r.user?.email),
+        escapeCsv(r.user?.usn),
+        escapeCsv(r.status),
+        escapeCsv(r.team?.name),
+        escapeCsv(r.createdAt.toISOString()),
+      ].join(','),
+    );
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="event-${eventId}-roster.csv"`);
+    res.send([header, ...lines].join('\r\n'));
+    return;
+  }
+
   res.json({
     registrations: registrations.map((r) => ({ ...toRegistrationDTO(r), user: r.user, team: r.team })),
   });
