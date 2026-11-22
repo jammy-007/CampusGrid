@@ -27,6 +27,43 @@ function generateRandomVerifyCode(length = 10): string {
   return code;
 }
 
+type LeaderboardResult = Awaited<ReturnType<typeof fetchAndComputeLeaderboard>>;
+
+const LEADERBOARD_CACHE_TTL_MS = 30_000;
+const LEADERBOARD_CACHE_MAX_ENTRIES = 500;
+const leaderboardCache = new Map<string, { value: LeaderboardResult; expiresAt: number }>();
+const leaderboardInFlight = new Map<string, Promise<LeaderboardResult>>();
+
+async function getCachedLeaderboard(eventId: string): Promise<LeaderboardResult> {
+  const now = Date.now();
+  const cached = leaderboardCache.get(eventId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const pending = leaderboardInFlight.get(eventId);
+  if (pending) return pending;
+
+  const promise = fetchAndComputeLeaderboard(eventId)
+    .then((result) => {
+      if (leaderboardCache.size >= LEADERBOARD_CACHE_MAX_ENTRIES) {
+        const oldestKey = leaderboardCache.keys().next().value;
+        if (oldestKey !== undefined) leaderboardCache.delete(oldestKey);
+      }
+      leaderboardCache.set(eventId, {
+        value: result,
+        expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+      });
+      return result;
+    })
+    .finally(() => {
+      leaderboardInFlight.delete(eventId);
+    });
+
+  leaderboardInFlight.set(eventId, promise);
+  return promise;
+}
+
 /**
  * Resolves Hackathon achievement title (1st/2nd/3rd place) for a team in an event.
  */
@@ -36,7 +73,7 @@ async function resolveTeamAchievement(
   teamId: string | null,
 ): Promise<string | null> {
   if (eventType !== 'HACKATHON' || !teamId) return null;
-  const leaderboard = await fetchAndComputeLeaderboard(eventId);
+  const leaderboard = await getCachedLeaderboard(eventId);
   if (!leaderboard) return null;
   const entry = leaderboard.rows.find((e) => e.teamId === teamId && e.judgesScored > 0);
   if (!entry) return null;
