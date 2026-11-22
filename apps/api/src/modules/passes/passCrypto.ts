@@ -54,10 +54,11 @@ export function getPassSigningKeys(): {
       console.warn('[passCrypto] Failed to parse keys from env, generating ephemeral keypair:', err);
     }
   } else if (env.isProd) {
-    throw new Error('Missing PASS_SIGNING_PRIVATE_KEY or PASS_SIGNING_PUBLIC_KEY in production');
+    // An ephemeral key would invalidate every issued pass on restart.
+    throw new Error('PASS_SIGNING_PRIVATE_KEY and PASS_SIGNING_PUBLIC_KEY are required in production');
   }
 
-  // Generate ephemeral keypair if not configured
+  // Generate ephemeral keypair if not configured (dev/test only)
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const spkiDer = publicKey.export({ type: 'spki', format: 'der' });
   const rawPub = spkiDer.subarray(spkiDer.length - 32);

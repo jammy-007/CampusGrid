@@ -141,9 +141,6 @@ importers:
       socket.io-client:
         specifier: ^4.8.4
         version: 4.8.4
-      zod:
-        specifier: ^4.6.5
-        version: 4.6.5
     devDependencies:
       '@tailwindcss/postcss':
         specifier: ^4.3.3
