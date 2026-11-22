@@ -382,7 +382,9 @@ router.post('/checkin/sync', requireAuth, async (req, res) => {
 /** Helper to format CSV field */
 function escapeCsv(val: unknown): string {
   if (val === null || val === undefined) return '';
-  const str = String(val);
+  let str = String(val);
+  // Stop spreadsheet apps running user-supplied text as a formula.
+  if (/^[=+\-@\t\r]/.test(str)) str = `'${str}`;
   if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
     return `"${str.replace(/"/g, '""')}"`;
   }

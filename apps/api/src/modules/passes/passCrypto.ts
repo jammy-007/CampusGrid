@@ -45,11 +45,15 @@ export function getPassSigningKeys(): {
       defaultRawPublicKey = rawPubBytes;
       return { privateKey: priv, publicKey: pubKeyObject, rawPublicKey: rawPubBytes };
     } catch (err) {
+      if (process.env.NODE_ENV === 'production') throw err;
       console.warn('[passCrypto] Failed to parse keys from env, generating ephemeral keypair:', err);
     }
+  } else if (process.env.NODE_ENV === 'production') {
+    // An ephemeral key would invalidate every issued pass on restart.
+    throw new Error('PASS_SIGNING_PRIVATE_KEY and PASS_SIGNING_PUBLIC_KEY are required in production');
   }
 
-  // Generate ephemeral keypair if not configured
+  // Generate ephemeral keypair if not configured (dev/test only)
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const spkiDer = publicKey.export({ type: 'spki', format: 'der' });
   const rawPub = spkiDer.subarray(spkiDer.length - 32);
