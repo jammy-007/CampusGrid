@@ -6,12 +6,15 @@ import {
   EVENT_STATUS_FLOW,
   eventListQuerySchema,
   updateEventSchema,
+  upsertFeedbackSchema,
   type EventAnnouncementDTO,
+  type EventFeedbackDTO,
+  type EventFeedbackSummaryDTO,
   type EventStatus,
 } from '@campusgrid/shared';
 import { prisma } from '../../lib/prisma';
 import { parse } from '../../lib/validate';
-import { badRequest, conflict } from '../../lib/errors';
+import { badRequest, conflict, forbidden } from '../../lib/errors';
 import { requireAuth, requireEventOrganizer, requireRole } from '../../middleware/auth';
 import { getIO } from '../../realtime/io';
 import { confirmedCounts, getVisibleEvent, toEventDTO, visibleEventsWhere } from './service';
@@ -30,6 +33,17 @@ router.get('/events', requireAuth, async (req, res) => {
   if (query.when === 'upcoming') filters.push({ endsAt: { gte: now } });
   if (query.when === 'past') filters.push({ endsAt: { lt: now } });
   if (query.mine === 'true') filters.push({ organizerId: user.id });
+  if (query.mode === 'team') filters.push({ isTeamEvent: true });
+  if (query.mode === 'solo') filters.push({ isTeamEvent: false });
+  if (query.q) {
+    filters.push({
+      OR: [
+        { title: { contains: query.q, mode: 'insensitive' } },
+        { venue: { contains: query.q, mode: 'insensitive' } },
+        { description: { contains: query.q, mode: 'insensitive' } },
+      ],
+    });
+  }
 
   const events = await prisma.event.findMany({
     where: { AND: filters },
@@ -163,6 +177,82 @@ router.post('/events/:eventId/announcements', requireAuth, requireEventOrganizer
   }
 
   res.status(201).json({ announcement: dto });
+});
+
+router.get('/events/:eventId/feedback', requireAuth, async (req, res) => {
+  const user = req.user!;
+  const event = await getVisibleEvent(user, req.params.eventId as string);
+  const rows = await prisma.eventFeedback.findMany({
+    where: { eventId: event.id },
+    include: { user: { select: { name: true } } },
+    orderBy: { createdAt: 'desc' },
+    take: 100,
+  });
+
+  const reviews: EventFeedbackDTO[] = rows.map((r) => ({
+    id: r.id,
+    eventId: r.eventId,
+    userId: r.userId,
+    userName: r.user.name,
+    rating: r.rating,
+    comment: r.comment,
+    createdAt: r.createdAt.toISOString(),
+  }));
+
+  const totalCount = reviews.length;
+  const averageRating =
+    totalCount > 0
+      ? Math.round((reviews.reduce((sum, r) => sum + r.rating, 0) / totalCount) * 10) / 10
+      : 0;
+  const myFeedback = reviews.find((r) => r.userId === user.id) ?? null;
+
+  const summary: EventFeedbackSummaryDTO = {
+    averageRating,
+    totalCount,
+    reviews,
+    myFeedback,
+  };
+  res.json(summary);
+});
+
+router.post('/events/:eventId/feedback', requireAuth, requireRole('STUDENT'), async (req, res) => {
+  const user = req.user!;
+  const event = await getVisibleEvent(user, req.params.eventId as string);
+  const input = parse(upsertFeedbackSchema, req.body);
+
+  const reg = await prisma.registration.findUnique({
+    where: { eventId_userId: { eventId: event.id, userId: user.id } },
+  });
+  if (!reg || reg.status !== 'CONFIRMED') {
+    throw forbidden('Only confirmed event participants can leave a review');
+  }
+
+  const saved = await prisma.eventFeedback.upsert({
+    where: { eventId_userId: { eventId: event.id, userId: user.id } },
+    create: {
+      eventId: event.id,
+      userId: user.id,
+      rating: input.rating,
+      comment: input.comment,
+    },
+    update: {
+      rating: input.rating,
+      comment: input.comment,
+    },
+    include: { user: { select: { name: true } } },
+  });
+
+  const feedback: EventFeedbackDTO = {
+    id: saved.id,
+    eventId: saved.eventId,
+    userId: saved.userId,
+    userName: saved.user.name,
+    rating: saved.rating,
+    comment: saved.comment,
+    createdAt: saved.createdAt.toISOString(),
+  };
+
+  res.status(201).json({ feedback });
 });
 
 router.patch('/events/:eventId', requireAuth, requireEventOrganizer(), async (req, res) => {

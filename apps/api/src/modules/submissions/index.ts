@@ -1,10 +1,12 @@
 import { Router } from 'express';
 import {
+  type ShowcaseSubmissionDTO,
   type SubmissionDTO,
   submitHackathonSchema,
 } from '@campusgrid/shared';
 import { prisma } from '../../lib/prisma';
 import { requireAuth } from '../../middleware/auth';
+import { fetchAndComputeLeaderboard } from '../leaderboard/service';
 import {
   GitHubValidationError,
   validateGithubRepository,
@@ -217,6 +219,57 @@ router.get('/events/:eventId/submissions', requireAuth, async (req, res) => {
   res.json({
     submissions: submissions.map((s) => toSubmissionDTO(s, event.endsAt)),
   });
+});
+
+// ----------------------------------------------------------------------
+// GET /events/:eventId/showcase
+// ----------------------------------------------------------------------
+router.get('/events/:eventId/showcase', requireAuth, async (req, res) => {
+  const eventId = String(req.params.eventId);
+
+  const event = await prisma.event.findFirst({
+    where: { id: eventId, institutionId: req.user!.institutionId },
+  });
+  if (!event) {
+    res.status(404).json({ error: { code: 'EVENT_NOT_FOUND', message: 'Event not found' } });
+    return;
+  }
+
+  const [submissions, leaderboard] = await Promise.all([
+    prisma.submission.findMany({
+      where: { eventId },
+      include: { team: true },
+      orderBy: { submittedAt: 'asc' },
+    }),
+    fetchAndComputeLeaderboard(eventId),
+  ]);
+
+  const rankByTeam = new Map<string, { rank: number; score: number }>();
+  if (leaderboard) {
+    for (const row of leaderboard.rows) {
+      if (row.judgesScored > 0) {
+        rankByTeam.set(row.teamId, { rank: row.rank, score: row.score });
+      }
+    }
+  }
+
+  const showcase: ShowcaseSubmissionDTO[] = submissions
+    .map((s) => {
+      const ranked = rankByTeam.get(s.teamId);
+      return {
+        ...toSubmissionDTO(s, event.endsAt),
+        rank: ranked?.rank ?? null,
+        score: ranked?.score ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (a.rank && b.rank) return a.rank - b.rank;
+      if (a.rank) return -1;
+      if (b.rank) return 1;
+      return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
+    });
+
+  res.json({ showcase });
 });
 
 // ----------------------------------------------------------------------

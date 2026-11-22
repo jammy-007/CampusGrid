@@ -98,7 +98,7 @@ export default function SubmitHackathonPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
-      <div>
+      <Card className="p-5">
         <Link href={`/events/${eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
           ← Back to {event?.title ?? 'Event'}
         </Link>
@@ -106,7 +106,7 @@ export default function SubmitHackathonPage({ params }: { params: Promise<{ id: 
         <p className="text-sm text-slate-300">
           Submit your public GitHub repository. Commits will be validated against hackathon start time.
         </p>
-      </div>
+      </Card>
 
       {event && (
         <Card className="space-y-2 text-xs text-slate-400">
