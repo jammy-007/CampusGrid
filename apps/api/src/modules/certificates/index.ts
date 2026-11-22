@@ -79,15 +79,40 @@ function toCertificateDTO(
   };
 }
 
-// shortcut: per-process cache, 30s stale; use a shared cache if the API runs on many instances.
-const leaderboardCache = new Map<string, { at: number; value: Promise<LeaderboardDTO | null> }>();
-function cachedLeaderboard(eventId: string) {
-  const hit = leaderboardCache.get(eventId);
-  if (hit && Date.now() - hit.at < 30_000) return hit.value;
-  const value = fetchAndComputeLeaderboard(eventId);
-  value.catch(() => leaderboardCache.delete(eventId));
-  leaderboardCache.set(eventId, { at: Date.now(), value });
-  return value;
+// Per-process cache (30s TTL, bounded to 500 events) with in-flight deduplication.
+const LEADERBOARD_CACHE_TTL_MS = 30_000;
+const LEADERBOARD_CACHE_MAX_ENTRIES = 500;
+const leaderboardCache = new Map<string, { value: LeaderboardDTO | null; expiresAt: number }>();
+const leaderboardInFlight = new Map<string, Promise<LeaderboardDTO | null>>();
+
+async function getCachedLeaderboard(eventId: string): Promise<LeaderboardDTO | null> {
+  const now = Date.now();
+  const cached = leaderboardCache.get(eventId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const pending = leaderboardInFlight.get(eventId);
+  if (pending) return pending;
+
+  const promise = fetchAndComputeLeaderboard(eventId)
+    .then((result) => {
+      if (leaderboardCache.size >= LEADERBOARD_CACHE_MAX_ENTRIES) {
+        const oldestKey = leaderboardCache.keys().next().value;
+        if (oldestKey !== undefined) leaderboardCache.delete(oldestKey);
+      }
+      leaderboardCache.set(eventId, {
+        value: result,
+        expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+      });
+      return result;
+    })
+    .finally(() => {
+      leaderboardInFlight.delete(eventId);
+    });
+
+  leaderboardInFlight.set(eventId, promise);
+  return promise;
 }
 
 /**
@@ -99,7 +124,7 @@ async function resolveTeamAchievement(
   teamId: string | null,
 ): Promise<string | null> {
   if (eventType !== 'HACKATHON' || !teamId) return null;
-  const leaderboard = await cachedLeaderboard(eventId);
+  const leaderboard = await getCachedLeaderboard(eventId);
   if (!leaderboard) return null;
   const entry = leaderboard.rows.find((e) => e.teamId === teamId && e.judgesScored > 0);
   if (!entry) return null;
@@ -561,6 +586,196 @@ router.get('/me/certificates', requireAuth, async (req, res) => {
   });
 
   res.json({ certificates: dtoList, eligibleRegistrations });
+});
+
+/**
+ * GET /api/me/transcript/pdf
+ * Generates a cumulative Official Co-Curricular & On-Duty (OD) Activity Transcript PDF for the student.
+ */
+router.get('/me/transcript/pdf', requireAuth, async (req, res) => {
+  const user = req.user!;
+
+  const [student, certificates] = await Promise.all([
+    prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      include: { institution: true },
+    }),
+    prisma.certificate.findMany({
+      where: {
+        registration: {
+          userId: user.id,
+        },
+      },
+      include: {
+        registration: {
+          include: {
+            team: true,
+            event: true,
+          },
+        },
+        issuedBy: true,
+      },
+      orderBy: { issuedAt: 'desc' },
+    }),
+  ]);
+
+  const enriched = await Promise.all(
+    certificates.map(async (c) => {
+      const achievement = await resolveTeamAchievement(
+        c.registration.eventId,
+        c.registration.event.type,
+        c.registration.teamId,
+      );
+      const durationMs = Math.max(
+        0,
+        c.registration.event.endsAt.getTime() - c.registration.event.startsAt.getTime(),
+      );
+      const hours = Math.max(1, Math.round((durationMs / (1000 * 60 * 60)) * 10) / 10);
+      return {
+        serial: c.serial,
+        verifyCode: c.verifyCode,
+        eventTitle: c.registration.event.title,
+        eventType: c.registration.event.type,
+        startsAt: c.registration.event.startsAt,
+        hours,
+        achievement,
+        teamName: c.registration.team?.name ?? null,
+      };
+    }),
+  );
+
+  const totalHours = Math.round(enriched.reduce((sum, e) => sum + e.hours, 0) * 10) / 10;
+  const totalAwards = enriched.filter((e) => Boolean(e.achievement)).length;
+
+  const doc = new PDFDocument({ size: 'A4', margin: 45 });
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header Banner
+    doc.rect(0, 0, doc.page.width, 95).fill('#0f172a');
+    doc
+      .fillColor('#38bdf8')
+      .font('Helvetica-Bold')
+      .fontSize(10)
+      .text(student.institution.name.toUpperCase(), 45, 24, { characterSpacing: 1.5 });
+    doc
+      .fillColor('#ffffff')
+      .font('Helvetica-Bold')
+      .fontSize(20)
+      .text('Co-Curricular & On-Duty (OD) Transcript', 45, 42);
+    doc
+      .fillColor('#94a3b8')
+      .font('Helvetica')
+      .fontSize(9)
+      .text(`Generated on ${new Date().toLocaleDateString('en-US', { dateStyle: 'long' })} via CampusGrid`, 45, 68);
+
+    // Student Profile Box
+    const yStudent = 115;
+    doc.roundedRect(45, yStudent, doc.page.width - 90, 62, 6).fillAndStroke('#f8fafc', '#cbd5e1');
+    doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text(student.name, 58, yStudent + 12);
+    doc
+      .fillColor('#475569')
+      .font('Helvetica')
+      .fontSize(9.5)
+      .text(`USN: ${student.usn ?? 'N/A'}   |   Email: ${student.email}`, 58, yStudent + 32);
+
+    // Summary Metrics
+    const metricsText = `Verified Events: ${enriched.length}   |   Cumulative OD Hours: ${totalHours} hrs   |   Merit Awards: ${totalAwards}`;
+    doc
+      .fillColor('#0369a1')
+      .font('Helvetica-Bold')
+      .fontSize(9.5)
+      .text(metricsText, 58, yStudent + 46);
+
+    // Table Header
+    let y = yStudent + 82;
+    doc.rect(45, y, doc.page.width - 90, 24).fill('#1e293b');
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
+    doc.text('SERIAL', 53, y + 7, { width: 85 });
+    doc.text('EVENT & DISTINCTION', 142, y + 7, { width: 195 });
+    doc.text('TYPE', 342, y + 7, { width: 62 });
+    doc.text('DATE', 408, y + 7, { width: 58 });
+    doc.text('HOURS', 468, y + 7, { width: 40 });
+    doc.text('VERIFY', 510, y + 7, { width: 40 });
+    y += 24;
+
+    if (enriched.length === 0) {
+      doc
+        .fillColor('#64748b')
+        .font('Helvetica')
+        .fontSize(10)
+        .text('No verified OD certificates have been claimed yet.', 45, y + 24, {
+          align: 'center',
+          width: doc.page.width - 90,
+        });
+    } else {
+      enriched.forEach((item, idx) => {
+        if (y > doc.page.height - 90) {
+          doc.addPage();
+          y = 45;
+        }
+        const rowHeight = item.achievement ? 34 : 24;
+        if (idx % 2 === 1) {
+          doc.rect(45, y, doc.page.width - 90, rowHeight).fill('#f1f5f9');
+        }
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8).text(item.serial, 53, y + 7, { width: 85 });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8.5).text(item.eventTitle, 142, y + 6, {
+          width: 195,
+          lineBreak: false,
+          ellipsis: true,
+        });
+        if (item.achievement) {
+          doc
+            .fillColor('#b45309')
+            .font('Helvetica-Bold')
+            .fontSize(7.5)
+            .text(
+              `★ ${item.achievement}${item.teamName ? ` (${item.teamName})` : ''}`,
+              142,
+              y + 18,
+              { width: 195, lineBreak: false, ellipsis: true },
+            );
+        }
+        doc.fillColor('#334155').font('Helvetica').fontSize(8).text(item.eventType, 342, y + 7, { width: 62 });
+        doc
+          .fillColor('#334155')
+          .font('Helvetica')
+          .fontSize(8)
+          .text(item.startsAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), 408, y + 7, {
+            width: 58,
+          });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8).text(`${item.hours}h`, 468, y + 7, { width: 40 });
+        doc.fillColor('#0284c7').font('Courier-Bold').fontSize(7.5).text(item.verifyCode, 505, y + 7, { width: 48 });
+
+        y += rowHeight;
+      });
+    }
+
+    // Footer
+    doc
+      .fillColor('#64748b')
+      .font('Helvetica')
+      .fontSize(8)
+      .text(
+        'Each certificate listed above can be independently verified at /verify/<CODE> on CampusGrid.',
+        45,
+        doc.page.height - 55,
+        { align: 'center', width: doc.page.width - 90 },
+      );
+
+    doc.end();
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="OD-Transcript-${(student.usn ?? student.id).replace(/[^a-zA-Z0-9_-]/g, '')}.pdf"`,
+  );
+  res.send(pdfBuffer);
 });
 
 /**

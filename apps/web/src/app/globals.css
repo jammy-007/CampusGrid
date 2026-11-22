@@ -78,3 +78,18 @@ body {
 .rb-spotlight-card .divide-slate-200 > :not(:last-child) {
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
+
+select.cg-select {
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  appearance: none !important;
+  background-image: none !important;
+}
+
+select.cg-select::picker-icon {
+  display: none !important;
+}
+
+select.cg-select::-ms-expand {
+  display: none !important;
+}

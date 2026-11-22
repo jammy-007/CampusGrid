@@ -6,6 +6,7 @@ export { Table, THead, TBody, TR, TH, TD } from './Table';
 export { Dialog } from './Dialog';
 export { ToastProvider, useToast } from './Toast';
 export { GradientASCII, type GradientASCIIProps } from './GradientASCII';
+export { ConnectingGrid, type ConnectingGridProps } from './ConnectingGrid';
 export {
   SpotlightCard,
   BlurText,

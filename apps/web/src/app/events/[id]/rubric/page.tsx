@@ -136,19 +136,21 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Link href={`/events/${eventId}/manage`} className="text-sm font-medium text-sky-400 hover:underline">
-            ← Back to Manage Event
-          </Link>
-          <h1 className="mt-1 text-2xl font-bold text-white">Rubric & Judge Configuration</h1>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Link href={`/events/${eventId}/manage`} className="text-sm font-medium text-sky-400 hover:underline">
+              ← Back to Manage Event
+            </Link>
+            <h1 className="mt-1 text-2xl font-bold text-white">Rubric & Judge Configuration</h1>
+          </div>
+          <div className="flex gap-2">
+            <ButtonLink href={`/events/${eventId}/leaderboard`} variant="secondary">
+              View Leaderboard
+            </ButtonLink>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <ButtonLink href={`/events/${eventId}/leaderboard`} variant="secondary">
-            View Leaderboard
-          </ButtonLink>
-        </div>
-      </div>
+      </Card>
 
       {errorMsg && (
         <div className="rounded-xl border border-red-500/30 bg-red-950/40 p-3 text-xs text-red-200">
@@ -168,12 +170,12 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
         </div>
       )}
 
-      <div className="flex gap-2 border-b border-white/10 pb-2">
+      <div className="inline-flex flex-wrap gap-1.5 rounded-xl border border-white/15 bg-slate-950/75 p-1.5 backdrop-blur-md">
         <button
           type="button"
           onClick={() => setActiveTab('rubric')}
           className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition ${
-            activeTab === 'rubric' ? 'bg-sky-500 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'rubric' ? 'bg-sky-500 text-white shadow' : 'text-slate-300 hover:bg-white/5 hover:text-white'
           }`}
         >
           Evaluation Criteria ({criteria.length})
@@ -182,7 +184,7 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
           type="button"
           onClick={() => setActiveTab('judges')}
           className={`rounded-lg px-4 py-1.5 text-xs font-semibold transition ${
-            activeTab === 'judges' ? 'bg-sky-500 text-white' : 'text-slate-400 hover:text-white'
+            activeTab === 'judges' ? 'bg-sky-500 text-white shadow' : 'text-slate-300 hover:bg-white/5 hover:text-white'
           }`}
         >
           Assigned Judges ({judges.filter((j) => j.assigned).length})
@@ -190,15 +192,16 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
       </div>
 
       {activeTab === 'rubric' && (
-        <Card className="space-y-4">
-          <div className="flex items-center justify-between">
-            <CardTitle>Weighted Evaluation Rubric</CardTitle>
-            {!rubric?.isLocked && (
-              <Button type="button" variant="secondary" onClick={handleAddCriterion} className="text-xs">
-                + Add Criterion
-              </Button>
-            )}
-          </div>
+        <Card className="p-6">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CardTitle>Weighted Evaluation Rubric</CardTitle>
+              {!rubric?.isLocked && (
+                <Button type="button" variant="secondary" onClick={handleAddCriterion} className="text-xs">
+                  + Add Criterion
+                </Button>
+              )}
+            </div>
 
           <div className="space-y-3">
             {criteria.map((c, idx) => (
@@ -264,22 +267,24 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
               </Button>
             </div>
           )}
+          </div>
         </Card>
       )}
 
       {activeTab === 'judges' && (
-        <Card className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle>Faculty Judge Assignment</CardTitle>
-              <p className="text-xs text-slate-400">
-                Select judges who will have access to the scoring matrix for this hackathon.
-              </p>
+        <Card className="p-6">
+          <div className="space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <CardTitle>Faculty Judge Assignment</CardTitle>
+                <p className="mt-1 text-xs text-slate-400">
+                  Select judges who will have access to the scoring matrix for this hackathon.
+                </p>
+              </div>
+              <Button onClick={handleSaveJudges} disabled={savingJudges}>
+                {savingJudges ? 'Saving...' : 'Save Assignments'}
+              </Button>
             </div>
-            <Button onClick={handleSaveJudges} disabled={savingJudges}>
-              {savingJudges ? 'Saving...' : 'Save Assignments'}
-            </Button>
-          </div>
 
           {judges.length === 0 ? (
             <p className="text-xs text-slate-400">No users with the JUDGE role found in this institution.</p>
@@ -312,6 +317,7 @@ export default function RubricPage({ params }: { params: Promise<{ id: string }>
               </TBody>
             </Table>
           )}
+          </div>
         </Card>
       )}
     </div>
