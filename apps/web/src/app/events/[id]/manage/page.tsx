@@ -5,9 +5,10 @@ import type { EventDTO, RegistrationDTO } from '@campusgrid/shared';
 import { apiServer } from '@/lib/server';
 import { getSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/format';
-import { Badge, ButtonLink, Card, DecryptedText, Table, TBody, TD, TH, THead, TR } from '@/components/ui';
+import { ButtonLink, Card, DecryptedText } from '@/components/ui';
 import { StatusBadge } from '../../_components/EventBits';
 import { StatusButton } from '../PublishButton';
+import { RosterTableClient } from './RosterTableClient';
 
 export const metadata: Metadata = { title: 'Manage event' };
 
@@ -32,26 +33,33 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
 
   const tabs = [...CHECKIN_TABS, ...(event.type === 'HACKATHON' ? HACKATHON_TABS : [])];
   const confirmed = registrations.filter((r) => r.status === 'CONFIRMED');
+  const waitlisted = registrations.filter((r) => r.status === 'WAITLISTED');
   const teams = new Set(confirmed.map((r) => r.teamId).filter(Boolean));
+  const fillPercent =
+    event.capacity && event.capacity > 0
+      ? Math.min(100, Math.round((confirmed.length / event.capacity) * 100))
+      : null;
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <Link href={`/events/${id}`} className="text-sm font-medium text-sky-400 hover:underline">
-            ← {event.title}
-          </Link>
-          <h1 className="mt-1 flex items-center gap-2.5 text-2xl font-bold text-white">
-            Manage event <StatusBadge status={event.status} />
-          </h1>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <Link href={`/events/${id}`} className="text-sm font-medium text-sky-400 hover:underline">
+              ← {event.title}
+            </Link>
+            <h1 className="mt-1 flex items-center gap-2.5 text-2xl font-bold text-white">
+              Manage event <StatusBadge status={event.status} />
+            </h1>
+          </div>
+          <div className="flex gap-2">
+            <ButtonLink href={`/events/${id}/edit`} variant="secondary">
+              Edit
+            </ButtonLink>
+            <StatusButton eventId={id} status={event.status} />
+          </div>
         </div>
-        <div className="flex gap-2">
-          <ButtonLink href={`/events/${id}/edit`} variant="secondary">
-            Edit
-          </ButtonLink>
-          <StatusButton eventId={id} status={event.status} />
-        </div>
-      </div>
+      </Card>
 
       <nav className="flex flex-wrap gap-2">
         {tabs.map((t) => (
@@ -65,14 +73,30 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
         ))}
       </nav>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-        <Card>
-          <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Registered</p>
-          <p className="mt-1 font-mono text-2xl font-bold text-white">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Card className="space-y-2">
+          <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Confirmed</p>
+          <p className="font-mono text-2xl font-bold text-white">
             <DecryptedText
               text={`${confirmed.length}${event.capacity !== null ? ` / ${event.capacity}` : ''}`}
               animateOn="view"
             />
+          </p>
+          {fillPercent !== null && (
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-800">
+              <div
+                className={`h-full rounded-full transition-all ${
+                  fillPercent >= 100 ? 'bg-amber-400' : 'bg-emerald-400'
+                }`}
+                style={{ width: `${fillPercent}%` }}
+              />
+            </div>
+          )}
+        </Card>
+        <Card>
+          <p className="text-xs font-medium tracking-wider text-slate-400 uppercase">Waitlisted</p>
+          <p className="mt-1 font-mono text-2xl font-bold text-amber-400">
+            <DecryptedText text={String(waitlisted.length)} animateOn="view" />
           </p>
         </Card>
         {event.isTeamEvent && (
@@ -89,49 +113,11 @@ export default async function ManageEventPage({ params }: { params: Promise<{ id
         </Card>
       </div>
 
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-white">Registrations</h2>
-        {registrations.length === 0 ? (
-          <Card className="text-sm text-slate-300">Nobody has registered yet.</Card>
-        ) : (
-          <Table>
-            <THead>
-              <TR>
-                <TH>Name</TH>
-                <TH>Email</TH>
-                <TH>USN</TH>
-                {event.isTeamEvent && <TH>Team</TH>}
-                <TH>Status</TH>
-                <TH>Registered</TH>
-              </TR>
-            </THead>
-            <TBody>
-              {registrations.map((r) => (
-                <TR key={r.id}>
-                  <TD>{r.user?.name}</TD>
-                  <TD>{r.user?.email}</TD>
-                  <TD>{r.user?.usn ?? '—'}</TD>
-                  {event.isTeamEvent && (
-                    <TD>
-                      {r.team ? (
-                        <Link href={`/teams/${r.team.id}`} className="font-medium text-sky-400 hover:underline">
-                          {r.team.name}
-                        </Link>
-                      ) : (
-                        '—'
-                      )}
-                    </TD>
-                  )}
-                  <TD>
-                    <Badge tone={r.status === 'CONFIRMED' ? 'green' : 'neutral'}>{r.status.toLowerCase()}</Badge>
-                  </TD>
-                  <TD>{formatDateTime(r.createdAt)}</TD>
-                </TR>
-              ))}
-            </TBody>
-          </Table>
-        )}
-      </section>
+      <RosterTableClient
+        eventId={id}
+        isTeamEvent={event.isTeamEvent}
+        registrations={registrations}
+      />
     </div>
   );
 }

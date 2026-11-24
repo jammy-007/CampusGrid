@@ -53,8 +53,57 @@ export function CertificatesClient({
 
   const pendingOrClaimable = registrations.filter((r) => !r.certificateId);
 
+  const totalOdHours =
+    Math.round(
+      certificates.reduce((sum, c) => {
+        const diffMs = Math.max(
+          0,
+          new Date(c.eventEndsAt).getTime() - new Date(c.eventStartsAt).getTime(),
+        );
+        return sum + Math.max(1, diffMs / (1000 * 60 * 60));
+      }, 0) * 10,
+    ) / 10;
+  const totalAwards = certificates.filter((c) => Boolean(c.achievement)).length;
+
   return (
     <div className="space-y-8">
+      {/* Co-Curricular Impact Summary & Official Transcript Export */}
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-6">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Verified Certificates
+              </p>
+              <p className="mt-0.5 font-mono text-2xl font-bold text-white">{certificates.length}</p>
+            </div>
+            <div className="h-8 w-px bg-white/10" />
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Cumulative OD Hours
+              </p>
+              <p className="mt-0.5 font-mono text-2xl font-bold text-sky-400">{totalOdHours} hrs</p>
+            </div>
+            <div className="h-8 w-px bg-white/10" />
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                Merit / Podium Awards
+              </p>
+              <p className="mt-0.5 font-mono text-2xl font-bold text-amber-400">{totalAwards}</p>
+            </div>
+          </div>
+
+          <a
+            href="/api/me/transcript/pdf"
+            target="_blank"
+            rel="noreferrer"
+            className={buttonClass('secondary', 'sm')}
+          >
+            ⬇ Download Official OD Transcript (PDF)
+          </a>
+        </div>
+      </Card>
+
       {/* Attendance & Certificate Claim Progress Section */}
       {pendingOrClaimable.length > 0 && (
         <section className="space-y-3">

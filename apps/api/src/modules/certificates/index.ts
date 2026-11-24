@@ -6,6 +6,7 @@ import type {
   CertificateDTO,
   EligibleCertificateRegistrationDTO,
   IssueCertificatesResponse,
+  LeaderboardDTO,
   VerifyCertificateResponse,
 } from '@campusgrid/shared';
 import { requireAuth, requireEventOrganizer } from '../../middleware/auth';
@@ -27,6 +28,93 @@ function generateRandomVerifyCode(length = 10): string {
   return code;
 }
 
+const isUniqueViolation = (err: unknown) =>
+  typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002';
+
+/** Inserts a certificate, retrying when the serial or verify code collides. */
+async function createCertificate(registrationId: string, issuedById: string) {
+  const year = new Date().getFullYear();
+  let next = (await prisma.certificate.count()) + 1;
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      return await prisma.certificate.create({
+        data: {
+          registrationId,
+          serial: `CG-${year}-${String(next++).padStart(6, '0')}`,
+          verifyCode: generateRandomVerifyCode(10),
+          issuedById,
+        },
+      });
+    } catch (err) {
+      if (!isUniqueViolation(err)) throw err;
+    }
+  }
+  throw new Error(`Failed to generate unique serial/code for registration ${registrationId}`);
+}
+
+function toCertificateDTO(
+  c: { id: string; registrationId: string; serial: string; verifyCode: string; issuedById: string; issuedAt: Date },
+  student: { name: string; email: string; usn: string | null },
+  event: { title: string; startsAt: Date; endsAt: Date; venue: string; institution: { name: string } },
+  issuerName: string,
+  extra: { achievement?: string | null; teamName?: string | null } = {},
+): CertificateDTO {
+  return {
+    id: c.id,
+    registrationId: c.registrationId,
+    serial: c.serial,
+    verifyCode: c.verifyCode,
+    issuedById: c.issuedById,
+    issuedAt: c.issuedAt.toISOString(),
+    studentName: student.name,
+    studentEmail: student.email,
+    studentUsn: student.usn,
+    eventTitle: event.title,
+    eventStartsAt: event.startsAt.toISOString(),
+    eventEndsAt: event.endsAt.toISOString(),
+    eventVenue: event.venue,
+    institutionName: event.institution.name,
+    issuerName,
+    ...extra,
+  };
+}
+
+// Per-process cache (30s TTL, bounded to 500 events) with in-flight deduplication.
+const LEADERBOARD_CACHE_TTL_MS = 30_000;
+const LEADERBOARD_CACHE_MAX_ENTRIES = 500;
+const leaderboardCache = new Map<string, { value: LeaderboardDTO | null; expiresAt: number }>();
+const leaderboardInFlight = new Map<string, Promise<LeaderboardDTO | null>>();
+
+async function getCachedLeaderboard(eventId: string): Promise<LeaderboardDTO | null> {
+  const now = Date.now();
+  const cached = leaderboardCache.get(eventId);
+  if (cached && cached.expiresAt > now) {
+    return cached.value;
+  }
+
+  const pending = leaderboardInFlight.get(eventId);
+  if (pending) return pending;
+
+  const promise = fetchAndComputeLeaderboard(eventId)
+    .then((result) => {
+      if (leaderboardCache.size >= LEADERBOARD_CACHE_MAX_ENTRIES) {
+        const oldestKey = leaderboardCache.keys().next().value;
+        if (oldestKey !== undefined) leaderboardCache.delete(oldestKey);
+      }
+      leaderboardCache.set(eventId, {
+        value: result,
+        expiresAt: Date.now() + LEADERBOARD_CACHE_TTL_MS,
+      });
+      return result;
+    })
+    .finally(() => {
+      leaderboardInFlight.delete(eventId);
+    });
+
+  leaderboardInFlight.set(eventId, promise);
+  return promise;
+}
+
 /**
  * Resolves Hackathon achievement title (1st/2nd/3rd place) for a team in an event.
  */
@@ -36,7 +124,7 @@ async function resolveTeamAchievement(
   teamId: string | null,
 ): Promise<string | null> {
   if (eventType !== 'HACKATHON' || !teamId) return null;
-  const leaderboard = await fetchAndComputeLeaderboard(eventId);
+  const leaderboard = await getCachedLeaderboard(eventId);
   if (!leaderboard) return null;
   const entry = leaderboard.rows.find((e) => e.teamId === teamId && e.judgesScored > 0);
   if (!entry) return null;
@@ -237,153 +325,33 @@ router.post('/events/:eventId/certificates/issue', requireAuth, requireEventOrga
     throw badRequest('Certificates can only be issued for ONGOING or COMPLETED events', 'EVENT_NOT_ELIGIBLE');
   }
 
-  // Find all confirmed registrations with both check-in AND check-out completed, but no certificate yet
+  // Confirmed registrations with check-in AND check-out done, but no certificate yet
   const eligibleWithoutCert = await prisma.registration.findMany({
     where: {
       eventId,
       status: 'CONFIRMED',
-      checkIns: {
-        some: {
-          checkedOutAt: { not: null },
-        },
-      },
+      checkIns: { some: { checkedOutAt: { not: null } } },
       certificate: null,
     },
-    include: {
-      user: true,
-    },
+    select: { id: true },
   });
 
-  if (eligibleWithoutCert.length === 0) {
-    const existing = await prisma.certificate.findMany({
-      where: {
-        registration: { eventId },
-      },
-      include: {
-        registration: {
-          include: { user: true, event: { include: { institution: true } } },
-        },
-        issuedBy: true,
-      },
-      orderBy: { issuedAt: 'asc' },
-    });
-
-    const existingDTOs: CertificateDTO[] = existing.map((c) => ({
-      id: c.id,
-      registrationId: c.registrationId,
-      serial: c.serial,
-      verifyCode: c.verifyCode,
-      issuedById: c.issuedById,
-      issuedAt: c.issuedAt.toISOString(),
-      studentName: c.registration.user.name,
-      studentEmail: c.registration.user.email,
-      studentUsn: c.registration.user.usn,
-      eventTitle: c.registration.event.title,
-      eventStartsAt: c.registration.event.startsAt.toISOString(),
-      eventEndsAt: c.registration.event.endsAt.toISOString(),
-      institutionName: c.registration.event.institution.name,
-      issuerName: c.issuedBy.name,
-    }));
-
-    const response: IssueCertificatesResponse = {
-      count: 0,
-      certificates: existingDTOs,
-    };
-    return res.json(response);
-  }
-
-  const currentYear = new Date().getFullYear();
-  const certCount = await prisma.certificate.count();
-  let nextSerialNum = certCount + 1;
-
-  const createdCertificates: CertificateDTO[] = [];
-
-  for (const reg of eligibleWithoutCert) {
-    let serial = '';
-    let verifyCode = '';
-    let inserted = false;
-
-    // Retry in the rare event of collision
-    for (let attempt = 0; attempt < 10; attempt++) {
-      serial = `CG-${currentYear}-${String(nextSerialNum).padStart(6, '0')}`;
-      verifyCode = generateRandomVerifyCode(10);
-      nextSerialNum++;
-
-      try {
-        const cert = await prisma.certificate.create({
-          data: {
-            registrationId: reg.id,
-            serial,
-            verifyCode,
-            issuedById: user.id,
-          },
-        });
-
-        createdCertificates.push({
-          id: cert.id,
-          registrationId: cert.registrationId,
-          serial: cert.serial,
-          verifyCode: cert.verifyCode,
-          issuedById: cert.issuedById,
-          issuedAt: cert.issuedAt.toISOString(),
-          studentName: reg.user.name,
-          studentEmail: reg.user.email,
-          studentUsn: reg.user.usn,
-          eventTitle: event.title,
-          eventStartsAt: event.startsAt.toISOString(),
-          eventEndsAt: event.endsAt.toISOString(),
-          institutionName: event.institution.name,
-          issuerName: user.name,
-        });
-
-        inserted = true;
-        break;
-      } catch (err: unknown) {
-        if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
-          continue;
-        }
-        throw err;
-      }
-    }
-
-    if (!inserted) {
-      throw new Error(`Failed to generate unique serial/code for registration ${reg.id}`);
-    }
-  }
+  for (const reg of eligibleWithoutCert) await createCertificate(reg.id, user.id);
 
   const allCertificates = await prisma.certificate.findMany({
-    where: {
-      registration: { eventId },
-    },
+    where: { registration: { eventId } },
     include: {
-      registration: {
-        include: { user: true, event: { include: { institution: true } } },
-      },
+      registration: { include: { user: true, event: { include: { institution: true } } } },
       issuedBy: true,
     },
     orderBy: { issuedAt: 'asc' },
   });
 
-  const allDTOs: CertificateDTO[] = allCertificates.map((c) => ({
-    id: c.id,
-    registrationId: c.registrationId,
-    serial: c.serial,
-    verifyCode: c.verifyCode,
-    issuedById: c.issuedById,
-    issuedAt: c.issuedAt.toISOString(),
-    studentName: c.registration.user.name,
-    studentEmail: c.registration.user.email,
-    studentUsn: c.registration.user.usn,
-    eventTitle: c.registration.event.title,
-    eventStartsAt: c.registration.event.startsAt.toISOString(),
-    eventEndsAt: c.registration.event.endsAt.toISOString(),
-    institutionName: c.registration.event.institution.name,
-    issuerName: c.issuedBy.name,
-  }));
-
   const response: IssueCertificatesResponse = {
-    count: createdCertificates.length,
-    certificates: allDTOs,
+    count: eligibleWithoutCert.length,
+    certificates: allCertificates.map((c) =>
+      toCertificateDTO(c, c.registration.user, c.registration.event, c.issuedBy.name),
+    ),
   };
 
   res.json(response);
@@ -439,24 +407,7 @@ router.post('/events/:eventId/certificates/claim', requireAuth, async (req, res)
   // If already claimed/issued, return existing certificate idempotently
   if (registration.certificate) {
     const c = registration.certificate;
-    const dto: CertificateDTO = {
-      id: c.id,
-      registrationId: c.registrationId,
-      serial: c.serial,
-      verifyCode: c.verifyCode,
-      issuedById: c.issuedById,
-      issuedAt: c.issuedAt.toISOString(),
-      studentName: registration.user.name,
-      studentEmail: registration.user.email,
-      studentUsn: registration.user.usn,
-      eventTitle: event.title,
-      eventStartsAt: event.startsAt.toISOString(),
-      eventEndsAt: event.endsAt.toISOString(),
-      eventVenue: event.venue,
-      institutionName: event.institution.name,
-      issuerName: c.issuedBy.name,
-    };
-    return res.json({ certificate: dto });
+    return res.json({ certificate: toCertificateDTO(c, registration.user, event, c.issuedBy.name) });
   }
 
   const checkIn = registration.checkIns[0];
@@ -481,53 +432,10 @@ router.post('/events/:eventId/certificates/claim', requireAuth, async (req, res)
     );
   }
 
-  const currentYear = new Date().getFullYear();
-  const certCount = await prisma.certificate.count();
-  let nextSerialNum = certCount + 1;
-
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const serial = `CG-${currentYear}-${String(nextSerialNum).padStart(6, '0')}`;
-    const verifyCode = generateRandomVerifyCode(10);
-    nextSerialNum++;
-
-    try {
-      const cert = await prisma.certificate.create({
-        data: {
-          registrationId: registration.id,
-          serial,
-          verifyCode,
-          issuedById: event.organizerId,
-        },
-      });
-
-      const dto: CertificateDTO = {
-        id: cert.id,
-        registrationId: cert.registrationId,
-        serial: cert.serial,
-        verifyCode: cert.verifyCode,
-        issuedById: cert.issuedById,
-        issuedAt: cert.issuedAt.toISOString(),
-        studentName: registration.user.name,
-        studentEmail: registration.user.email,
-        studentUsn: registration.user.usn,
-        eventTitle: event.title,
-        eventStartsAt: event.startsAt.toISOString(),
-        eventEndsAt: event.endsAt.toISOString(),
-        eventVenue: event.venue,
-        institutionName: event.institution.name,
-        issuerName: event.organizer.name,
-      };
-
-      return res.status(201).json({ certificate: dto });
-    } catch (err: unknown) {
-      if (err && typeof err === 'object' && 'code' in err && (err as { code: string }).code === 'P2002') {
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new Error(`Failed to generate unique serial/code for registration ${registration.id}`);
+  const cert = await createCertificate(registration.id, event.organizerId);
+  return res
+    .status(201)
+    .json({ certificate: toCertificateDTO(cert, registration.user, event, event.organizer.name) });
 });
 
 /**
@@ -647,25 +555,10 @@ router.get('/me/certificates', requireAuth, async (req, res) => {
         c.registration.event.type,
         c.registration.teamId,
       );
-      return {
-        id: c.id,
-        registrationId: c.registrationId,
-        serial: c.serial,
-        verifyCode: c.verifyCode,
-        issuedById: c.issuedById,
-        issuedAt: c.issuedAt.toISOString(),
-        studentName: c.registration.user.name,
-        studentEmail: c.registration.user.email,
-        studentUsn: c.registration.user.usn,
-        eventTitle: c.registration.event.title,
-        eventStartsAt: c.registration.event.startsAt.toISOString(),
-        eventEndsAt: c.registration.event.endsAt.toISOString(),
-        eventVenue: c.registration.event.venue,
-        institutionName: c.registration.event.institution.name,
-        issuerName: c.issuedBy.name,
+      return toCertificateDTO(c, c.registration.user, c.registration.event, c.issuedBy.name, {
         achievement,
         teamName: c.registration.team?.name ?? null,
-      };
+      });
     }),
   );
 
@@ -693,6 +586,196 @@ router.get('/me/certificates', requireAuth, async (req, res) => {
   });
 
   res.json({ certificates: dtoList, eligibleRegistrations });
+});
+
+/**
+ * GET /api/me/transcript/pdf
+ * Generates a cumulative Official Co-Curricular & On-Duty (OD) Activity Transcript PDF for the student.
+ */
+router.get('/me/transcript/pdf', requireAuth, async (req, res) => {
+  const user = req.user!;
+
+  const [student, certificates] = await Promise.all([
+    prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      include: { institution: true },
+    }),
+    prisma.certificate.findMany({
+      where: {
+        registration: {
+          userId: user.id,
+        },
+      },
+      include: {
+        registration: {
+          include: {
+            team: true,
+            event: true,
+          },
+        },
+        issuedBy: true,
+      },
+      orderBy: { issuedAt: 'desc' },
+    }),
+  ]);
+
+  const enriched = await Promise.all(
+    certificates.map(async (c) => {
+      const achievement = await resolveTeamAchievement(
+        c.registration.eventId,
+        c.registration.event.type,
+        c.registration.teamId,
+      );
+      const durationMs = Math.max(
+        0,
+        c.registration.event.endsAt.getTime() - c.registration.event.startsAt.getTime(),
+      );
+      const hours = Math.max(1, Math.round((durationMs / (1000 * 60 * 60)) * 10) / 10);
+      return {
+        serial: c.serial,
+        verifyCode: c.verifyCode,
+        eventTitle: c.registration.event.title,
+        eventType: c.registration.event.type,
+        startsAt: c.registration.event.startsAt,
+        hours,
+        achievement,
+        teamName: c.registration.team?.name ?? null,
+      };
+    }),
+  );
+
+  const totalHours = Math.round(enriched.reduce((sum, e) => sum + e.hours, 0) * 10) / 10;
+  const totalAwards = enriched.filter((e) => Boolean(e.achievement)).length;
+
+  const doc = new PDFDocument({ size: 'A4', margin: 45 });
+  const chunks: Buffer[] = [];
+  doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header Banner
+    doc.rect(0, 0, doc.page.width, 95).fill('#0f172a');
+    doc
+      .fillColor('#38bdf8')
+      .font('Helvetica-Bold')
+      .fontSize(10)
+      .text(student.institution.name.toUpperCase(), 45, 24, { characterSpacing: 1.5 });
+    doc
+      .fillColor('#ffffff')
+      .font('Helvetica-Bold')
+      .fontSize(20)
+      .text('Co-Curricular & On-Duty (OD) Transcript', 45, 42);
+    doc
+      .fillColor('#94a3b8')
+      .font('Helvetica')
+      .fontSize(9)
+      .text(`Generated on ${new Date().toLocaleDateString('en-US', { dateStyle: 'long' })} via CampusGrid`, 45, 68);
+
+    // Student Profile Box
+    const yStudent = 115;
+    doc.roundedRect(45, yStudent, doc.page.width - 90, 62, 6).fillAndStroke('#f8fafc', '#cbd5e1');
+    doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(12).text(student.name, 58, yStudent + 12);
+    doc
+      .fillColor('#475569')
+      .font('Helvetica')
+      .fontSize(9.5)
+      .text(`USN: ${student.usn ?? 'N/A'}   |   Email: ${student.email}`, 58, yStudent + 32);
+
+    // Summary Metrics
+    const metricsText = `Verified Events: ${enriched.length}   |   Cumulative OD Hours: ${totalHours} hrs   |   Merit Awards: ${totalAwards}`;
+    doc
+      .fillColor('#0369a1')
+      .font('Helvetica-Bold')
+      .fontSize(9.5)
+      .text(metricsText, 58, yStudent + 46);
+
+    // Table Header
+    let y = yStudent + 82;
+    doc.rect(45, y, doc.page.width - 90, 24).fill('#1e293b');
+    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8.5);
+    doc.text('SERIAL', 53, y + 7, { width: 85 });
+    doc.text('EVENT & DISTINCTION', 142, y + 7, { width: 195 });
+    doc.text('TYPE', 342, y + 7, { width: 62 });
+    doc.text('DATE', 408, y + 7, { width: 58 });
+    doc.text('HOURS', 468, y + 7, { width: 40 });
+    doc.text('VERIFY', 510, y + 7, { width: 40 });
+    y += 24;
+
+    if (enriched.length === 0) {
+      doc
+        .fillColor('#64748b')
+        .font('Helvetica')
+        .fontSize(10)
+        .text('No verified OD certificates have been claimed yet.', 45, y + 24, {
+          align: 'center',
+          width: doc.page.width - 90,
+        });
+    } else {
+      enriched.forEach((item, idx) => {
+        if (y > doc.page.height - 90) {
+          doc.addPage();
+          y = 45;
+        }
+        const rowHeight = item.achievement ? 34 : 24;
+        if (idx % 2 === 1) {
+          doc.rect(45, y, doc.page.width - 90, rowHeight).fill('#f1f5f9');
+        }
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8).text(item.serial, 53, y + 7, { width: 85 });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8.5).text(item.eventTitle, 142, y + 6, {
+          width: 195,
+          lineBreak: false,
+          ellipsis: true,
+        });
+        if (item.achievement) {
+          doc
+            .fillColor('#b45309')
+            .font('Helvetica-Bold')
+            .fontSize(7.5)
+            .text(
+              `★ ${item.achievement}${item.teamName ? ` (${item.teamName})` : ''}`,
+              142,
+              y + 18,
+              { width: 195, lineBreak: false, ellipsis: true },
+            );
+        }
+        doc.fillColor('#334155').font('Helvetica').fontSize(8).text(item.eventType, 342, y + 7, { width: 62 });
+        doc
+          .fillColor('#334155')
+          .font('Helvetica')
+          .fontSize(8)
+          .text(item.startsAt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }), 408, y + 7, {
+            width: 58,
+          });
+        doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(8).text(`${item.hours}h`, 468, y + 7, { width: 40 });
+        doc.fillColor('#0284c7').font('Courier-Bold').fontSize(7.5).text(item.verifyCode, 505, y + 7, { width: 48 });
+
+        y += rowHeight;
+      });
+    }
+
+    // Footer
+    doc
+      .fillColor('#64748b')
+      .font('Helvetica')
+      .fontSize(8)
+      .text(
+        'Each certificate listed above can be independently verified at /verify/<CODE> on CampusGrid.',
+        45,
+        doc.page.height - 55,
+        { align: 'center', width: doc.page.width - 90 },
+      );
+
+    doc.end();
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader(
+    'Content-Disposition',
+    `attachment; filename="OD-Transcript-${(student.usn ?? student.id).replace(/[^a-zA-Z0-9_-]/g, '')}.pdf"`,
+  );
+  res.send(pdfBuffer);
 });
 
 /**

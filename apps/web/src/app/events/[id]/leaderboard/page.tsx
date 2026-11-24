@@ -88,45 +88,47 @@ export default function LeaderboardPage({ params }: { params: Promise<{ id: stri
           : 'space-y-6'
       }
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="space-y-1">
-          {!projectorMode && (
-            <Link href={`/events/${eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
-              ← Back to {event?.title ?? 'Event'}
-            </Link>
-          )}
-          <div className="flex items-center gap-3">
-            <h1 className={`${projectorMode ? 'text-4xl font-extrabold' : 'text-2xl font-bold'} text-white`}>
-              {event?.title ?? 'Hackathon'} Leaderboard
-            </h1>
-            <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
-              <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
-              {isLiveConnected ? 'LIVE' : 'SYNCING'}
-            </span>
+      <Card className="p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1">
+            {!projectorMode && (
+              <Link href={`/events/${eventId}`} className="text-sm font-medium text-sky-400 hover:underline">
+                ← Back to {event?.title ?? 'Event'}
+              </Link>
+            )}
+            <div className="flex items-center gap-3">
+              <h1 className={`${projectorMode ? 'text-4xl font-extrabold' : 'text-2xl font-bold'} text-white`}>
+                {event?.title ?? 'Hackathon'} Leaderboard
+              </h1>
+              <span className="flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-xs font-semibold text-emerald-400">
+                <span className="size-2 rounded-full bg-emerald-400 animate-pulse" />
+                {isLiveConnected ? 'LIVE' : 'SYNCING'}
+              </span>
+            </div>
+            {leaderboard?.updatedAt && (
+              <p className="text-xs text-slate-400">
+                Last score update: {formatDateTime(leaderboard.updatedAt)}
+              </p>
+            )}
           </div>
-          {leaderboard?.updatedAt && (
-            <p className="text-xs text-slate-400">
-              Last score update: {formatDateTime(leaderboard.updatedAt)}
-            </p>
-          )}
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() => setProjectorMode(!projectorMode)}
-            className="text-xs"
-          >
-            {projectorMode ? 'Exit Projector Mode' : '📺 Projector Mode'}
-          </Button>
-          {!projectorMode && (
-            <ButtonLink href={`/events/${eventId}/submit`} variant="secondary">
-              My Submission
-            </ButtonLink>
-          )}
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setProjectorMode(!projectorMode)}
+              className="text-xs"
+            >
+              {projectorMode ? 'Exit Projector Mode' : '📺 Projector Mode'}
+            </Button>
+            {!projectorMode && (
+              <ButtonLink href={`/events/${eventId}/submit`} variant="secondary">
+                My Submission
+              </ButtonLink>
+            )}
+          </div>
         </div>
-      </div>
+      </Card>
 
       <Card className={projectorMode ? 'bg-slate-900/90 border-slate-700/60 p-6' : ''}>
         {rows.length === 0 ? (

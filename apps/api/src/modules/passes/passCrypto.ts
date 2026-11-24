@@ -7,6 +7,7 @@ import {
   base64UrlDecodeToBytes,
   base64UrlDecodeToString,
 } from '@campusgrid/shared';
+import { env } from '../../lib/env';
 
 // ASN.1 DER prefixes for Ed25519
 const SPKI_ED25519_HEADER = Buffer.from('302a300506032b6570032100', 'hex'); // 12 bytes
@@ -45,11 +46,19 @@ export function getPassSigningKeys(): {
       defaultRawPublicKey = rawPubBytes;
       return { privateKey: priv, publicKey: pubKeyObject, rawPublicKey: rawPubBytes };
     } catch (err) {
+      if (env.isProd) {
+        throw new Error('Invalid PASS_SIGNING_PRIVATE_KEY or PASS_SIGNING_PUBLIC_KEY in production', {
+          cause: err,
+        });
+      }
       console.warn('[passCrypto] Failed to parse keys from env, generating ephemeral keypair:', err);
     }
+  } else if (env.isProd) {
+    // An ephemeral key would invalidate every issued pass on restart.
+    throw new Error('PASS_SIGNING_PRIVATE_KEY and PASS_SIGNING_PUBLIC_KEY are required in production');
   }
 
-  // Generate ephemeral keypair if not configured
+  // Generate ephemeral keypair if not configured (dev/test only)
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const spkiDer = publicKey.export({ type: 'spki', format: 'der' });
   const rawPub = spkiDer.subarray(spkiDer.length - 32);

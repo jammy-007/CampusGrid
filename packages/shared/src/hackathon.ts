@@ -53,6 +53,11 @@ export interface SubmissionDTO {
   commitsAfterDeadline?: boolean;
 }
 
+export interface ShowcaseSubmissionDTO extends SubmissionDTO {
+  rank?: number | null;
+  score?: number | null;
+}
+
 // ==========================================
 // Rubric & Judging Schemas & DTOs
 // ==========================================
