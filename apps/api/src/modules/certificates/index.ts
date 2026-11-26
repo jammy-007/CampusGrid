@@ -168,7 +168,7 @@ async function generateCertificatePdf(cert: {
       layout: 'landscape',
       margins: { top: 36, bottom: 36, left: 36, right: 36 },
       info: {
-        Title: `Duty Leave Certificate - ${cert.studentName}`,
+        Title: `Certificate of Participation - ${cert.studentName}`,
         Author: 'CampusGrid',
         Subject: cert.eventTitle,
       },
@@ -199,33 +199,41 @@ async function generateCertificatePdf(cert: {
       .text(cert.institutionName.toUpperCase(), 0, 55, { align: 'center', width });
 
     // Certificate Title
-    doc.fillColor('#2563eb').fontSize(24).font('Helvetica-Bold')
-      .text('ON DUTY (OD) / DUTY LEAVE CERTIFICATE', 0, 85, { align: 'center', width });
+    doc.fillColor('#2563eb').fontSize(26).font('Helvetica-Bold')
+      .text('CERTIFICATE OF PARTICIPATION', 0, 85, { align: 'center', width });
 
     doc.fillColor('#64748b').fontSize(11).font('Helvetica')
-      .text('OFFICIAL VERIFIED PARTICIPATION & ATTENDANCE RECORD', 0, 118, { align: 'center', width });
+      .text('OFFICIAL VERIFIED PARTICIPATION & ATTENDANCE RECORD', 0, 120, { align: 'center', width });
 
     // Decorative line
     doc.strokeColor('#cbd5e1').lineWidth(1)
-      .moveTo(180, 140).lineTo(width - 180, 140).stroke();
+      .moveTo(180, 142).lineTo(width - 180, 142).stroke();
 
     // Body
     doc.fillColor('#475569').fontSize(13).font('Helvetica')
-      .text('This is to certify that', 0, 160, { align: 'center', width });
+      .text('This is to certify that', 0, 158, { align: 'center', width });
 
     // Student Name
     doc.fillColor('#0f172a').fontSize(22).font('Helvetica-Bold')
-      .text(cert.studentName, 0, 185, { align: 'center', width });
+      .text(cert.studentName, 0, 182, { align: 'center', width });
 
     // Student USN / ID
     const usnBase = cert.studentUsn ? `USN: ${cert.studentUsn}` : 'Student Participant';
     const usnText = cert.teamName ? `${usnBase}  ·  Team: ${cert.teamName}` : usnBase;
     doc.fillColor('#64748b').fontSize(12).font('Helvetica')
-      .text(usnText, 0, 212, { align: 'center', width });
+      .text(usnText, 0, 210, { align: 'center', width });
 
+    let bodyOffsetY = 0;
     if (cert.achievement) {
-      doc.fillColor('#b45309').fontSize(13).font('Helvetica-Bold')
-        .text(`★ ${cert.achievement} ★`, 0, 230, { align: 'center', width });
+      const badgeW = 210;
+      const badgeH = 22;
+      const badgeX = (width - badgeW) / 2;
+      const badgeY = 230;
+      doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 11)
+        .fillAndStroke('#fef3c7', '#f59e0b');
+      doc.fillColor('#b45309').fontSize(11).font('Helvetica-Bold')
+        .text(cert.achievement, badgeX, badgeY + 5, { align: 'center', width: badgeW });
+      bodyOffsetY = 24;
     }
 
     // Description text
@@ -242,19 +250,19 @@ async function generateCertificatePdf(cert: {
     const dateRange = dateStr === endDateStr ? dateStr : `${dateStr} to ${endDateStr}`;
 
     doc.fillColor('#334155').fontSize(13).font('Helvetica')
-      .text('has successfully checked in and attended the event', 0, 245, { align: 'center', width });
+      .text('has successfully checked in and participated in the event', 0, 240 + bodyOffsetY, { align: 'center', width });
 
     doc.fillColor('#1e40af').fontSize(18).font('Helvetica-Bold')
-      .text(`"${cert.eventTitle}"`, 0, 270, { align: 'center', width });
+      .text(`"${cert.eventTitle}"`, 0, 265 + bodyOffsetY, { align: 'center', width });
 
     doc.fillColor('#475569').fontSize(12).font('Helvetica')
-      .text(`Held on ${dateRange} at ${cert.venue}`, 0, 302, { align: 'center', width });
+      .text(`Held on ${dateRange} at ${cert.venue}`, 0, 295 + bodyOffsetY, { align: 'center', width });
 
     doc.fillColor('#64748b').fontSize(10).font('Helvetica-Oblique')
       .text(
-        'This certificate serves as official verification for academic Duty Leave / On Duty (OD) sanction.',
+        'This certificate serves as official verification of participation and attendance.',
         0,
-        328,
+        320 + bodyOffsetY,
         { align: 'center', width },
       );
 
@@ -263,34 +271,39 @@ async function generateCertificatePdf(cert: {
     doc.strokeColor('#e2e8f0').lineWidth(1)
       .moveTo(50, bottomY - 15).lineTo(width - 50, bottomY - 15).stroke();
 
-    // Left: Serial & Date
+    // Left: Issuing Authority & Authorized Signature
     doc.fillColor('#64748b').fontSize(10).font('Helvetica')
-      .text('Certificate Serial:', 60, bottomY);
-    doc.fillColor('#0f172a').fontSize(11).font('Helvetica-Bold')
-      .text(cert.serial, 60, bottomY + 16);
-
-    doc.fillColor('#64748b').fontSize(10).font('Helvetica')
-      .text('Date of Issue:', 60, bottomY + 38);
-    doc.fillColor('#0f172a').fontSize(10).font('Helvetica')
-      .text(cert.issuedAt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }), 60, bottomY + 52);
-
-    // Middle: Issuing Authority
-    doc.fillColor('#64748b').fontSize(10).font('Helvetica')
-      .text('Issued By:', 300, bottomY);
+      .text('Issued By:', 60, bottomY);
     doc.fillColor('#0f172a').fontSize(12).font('Helvetica-Bold')
-      .text(cert.issuerName, 300, bottomY + 16);
+      .text(cert.issuerName, 60, bottomY + 16);
     doc.fillColor('#64748b').fontSize(9).font('Helvetica')
-      .text('Authorized Event Coordinator / Admin', 300, bottomY + 34);
+      .text('Authorized Event Coordinator / Admin', 60, bottomY + 34);
     doc.strokeColor('#94a3b8').lineWidth(1)
-      .moveTo(300, bottomY + 65).lineTo(480, bottomY + 65).stroke();
+      .moveTo(60, bottomY + 75).lineTo(240, bottomY + 75).stroke();
     doc.fontSize(8).fillColor('#94a3b8')
-      .text('Authorized Signature', 300, bottomY + 70);
+      .text('Authorized Signature', 60, bottomY + 82);
+
+    // Center: Serial & Date
+    doc.fillColor('#64748b').fontSize(10).font('Helvetica')
+      .text('Certificate Serial:', 320, bottomY + 8, { width: 200, align: 'center' });
+    doc.fillColor('#0f172a').fontSize(11).font('Helvetica-Bold')
+      .text(cert.serial, 320, bottomY + 24, { width: 200, align: 'center' });
+
+    doc.fillColor('#64748b').fontSize(10).font('Helvetica')
+      .text('Date of Issue:', 320, bottomY + 48, { width: 200, align: 'center' });
+    doc.fillColor('#0f172a').fontSize(10).font('Helvetica')
+      .text(
+        cert.issuedAt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }),
+        320,
+        bottomY + 62,
+        { width: 200, align: 'center' },
+      );
 
     // Right: QR Code + Verification
     const qrX = width - 190;
     doc.image(qrBuffer, qrX, bottomY - 10, { width: 100 });
     doc.fillColor('#64748b').fontSize(8).font('Helvetica')
-      .text('Scan to verify genuine OD at', qrX - 25, bottomY + 95, { width: 150, align: 'center' });
+      .text('Scan to verify certificate at', qrX - 25, bottomY + 95, { width: 150, align: 'center' });
     doc.fillColor('#2563eb').fontSize(8).font('Helvetica-Bold')
       .text(cert.verifyCode, qrX - 25, bottomY + 107, { width: 150, align: 'center' });
 

@@ -7,6 +7,7 @@ import { getSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/format';
 import { BlurText, ButtonLink, Card, DecryptedText, Magnet } from '@/components/ui';
 import { EventCard, StatusBadge } from '../events/_components/EventBits';
+import { StaffManagementPanel, type StaffUserItem } from './StaffManagementPanel';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
@@ -15,10 +16,15 @@ export default async function DashboardPage() {
   if (!user) redirect('/login?next=/dashboard');
 
   if (user.role === 'ORGANIZER' || user.role === 'ADMIN') {
-    const { events } = await apiServer<{ events: EventDTO[] }>(
-      `/api/events${user.role === 'ORGANIZER' ? '?mine=true' : ''}`,
-      '/dashboard',
-    );
+    const [{ events }, staffData] = await Promise.all([
+      apiServer<{ events: EventDTO[] }>(
+        `/api/events${user.role === 'ORGANIZER' ? '?mine=true' : ''}`,
+        '/dashboard',
+      ),
+      user.role === 'ADMIN'
+        ? apiServer<{ users: StaffUserItem[] }>('/api/users', '/dashboard')
+        : Promise.resolve({ users: [] as StaffUserItem[] }),
+    ]);
     return (
       <div className="space-y-6">
         <Card className="p-5">
@@ -61,6 +67,7 @@ export default async function DashboardPage() {
             ))}
           </Card>
         )}
+        {user.role === 'ADMIN' && <StaffManagementPanel initialUsers={staffData.users} />}
       </div>
     );
   }
